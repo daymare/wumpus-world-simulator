@@ -6,7 +6,7 @@ OBJECTS = Action.o Agent.o Location.o Orientation.o Percept.o WumpusWorld.o
 PYTHON-DEF = -DPYTHON
 PYTHON-OBJ = Action.o PyAgent.o Location.o Orientation.o Percept.o WumpusWorld.o
 
-PYTHON_CONFIG = python-config
+PYTHON_CONFIG = python3.6m-config
 PYTHON-INC = $(shell $(PYTHON_CONFIG) --includes)
 PYTHON-LIB = $(shell $(PYTHON_CONFIG) --ldflags)
 
@@ -18,7 +18,11 @@ PYTHON-LIB = $(shell $(PYTHON_CONFIG) --ldflags)
 #PYTHON-INC = -I/usr/include/python2.7
 #PYTHON-LIB = -L/usr/lib64 -lpython2.7
 
-all: wumpsim
+
+all: pywumpsim
+
+run: pywumpsim
+	./pywumpsim
 
 pywumpsim: wumpsim.h wumpsim.cc $(PYTHON-OBJ)
 	$(CC) -o pywumpsim wumpsim.cc $(PYTHON-DEF) $(PYTHON-INC) $(PYTHON-OBJ) $(PYTHON-LIB)
