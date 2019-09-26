@@ -56,6 +56,46 @@ class Map:
             "wumpus" : 8
             }
 
+    def print(self):
+        """ print the map to the screen
+
+            each cell will be represented by numpy arrays
+            each cell will then be stitched together to form the map
+            then we print out the map
+        """
+        symbol_map = 
+            {
+                0 : "ok",
+                1 : "V",
+                2 : "PP",
+                3 : "PW",
+                4 : "S",
+                5 : "B",
+                6 : "G",
+                7 : "P",
+                8 : "W"
+            }
+        cell_layout = \
+            [
+                ['', '0', '', '1', ''],
+                ['', '4', '', '5', ''],
+                ['', '7', '', '8', ''],
+                ['', '', '', '', ''],
+                ['-', '-', '-', '-', '-'],
+                ['', '2', '', '3', '']
+            ]
+        cell_layout = np.array(cell_layout, dtype=np.character)
+        cell_layout = np.transpose(cell_layout)
+        def build_cell(x, y):
+            x_dim = cell_layout.shape(1)
+            pass
+
+
+
+
+
+
+
     def update(self, x, y, percept):
         # ensure current position is set visited and OK
         world_map[x, y, self.index_map["ok"]] = 1
