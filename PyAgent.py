@@ -21,7 +21,7 @@ class Util():
             return Action.TURNRIGHT
 
     @staticmethod
-    def add_row_seperator(display_map, ypos, cell_width):
+    def add_row_separator(display_map, ypos, cell_width):
         plus_distance = 0 # distance until we need to 
             # display another plus
 
@@ -33,6 +33,46 @@ class Util():
             else:
                 display_map[xpos, ypos] = '-'
                 plus_distance -= 1
+
+    @staticmethod
+    def extract_cell_row(cells, ypos):
+        # cells shape should be  (xdim, ydim)
+        xdim = cells.shape[0]
+        cell_row = []
+        for x in range(xdim):
+            cell_row.append(cells[x, ypos])
+
+        return cell_row
+
+    @staticmethod
+    def add_cell_row(display_map, starting_ypos, cells_y, cells,
+            cell_width, cell_height):
+        ypos = starting_pos
+
+        cell_row = extract_cell_row(cells, cells_y)
+        xpos = 0
+
+        for ydiff in range(cell_height):
+            xpos = 0
+
+            # add leftmost separator
+            display_map[xpos, ypos] = '|'
+            xpos += 1
+
+            for cell in cell_row:
+                for xdiff in cell_width:
+                    display_map[xpos, ypos] = cell[xdiff, ydiff]
+                    xpos += 1
+
+                # add right row separator
+                display_map[xpos, ypos] = '|'
+                xpos += 1
+            ypos += 1
+
+        final_y = ypos
+
+        return final_y
+
 
 class Map:
     """ class for keeping track of the world map at any given time
@@ -106,7 +146,10 @@ class Map:
 
         cell_width = cell_layout.shape[0]
         cell_height = cell_layout.shape[1]
+        map_width = self.world_map.shape[0]
+        map_height = self.world_map.shape[1]
 
+        # TODO double check build cell works as expected
         def build_cell(map_x, map_y):
             """ build a display cell from the given map indecies
             """
@@ -133,6 +176,8 @@ class Map:
                                 cell[x+i, y] = symbol[i]
             
             return cell
+
+        # TODO double check build map works as expected
         def build_map(cells):
             """ build a display map from a matrix of cells
                 dimensions should be (
@@ -140,8 +185,6 @@ class Map:
                     1 + (cell_height + 1) * num_cellsy)
             """
             # TODO double check shape of world map is as expected
-            map_width = self.world_map.shape[0]
-            map_height = self.world_map.shape[1]
 
             xdim = 1 + (cell_width + 1) * map_width
             ydim = 1 + (cell_height + 1) * map_height
@@ -151,15 +194,42 @@ class Map:
             ypos = 0
 
             # set first spacer
-            Util.add_row_seperator(display_map, 0, cell_width)
+            Util.add_row_separator(display_map, ypos, cell_width)
+            ypos += 1
             
             for y in range(map_height):
                 # set the cells
+                ypos = add_cell_row(display_map, ypos, y, cells,
+                        cell_width, cell_height)
 
                 # set the next spacer
-                pass
-            
+                Util.add_row_separator(display_map, ypos, cell_width)
+                ypos += 1
 
+            return display_map
+
+        def print_display_map(display_map):
+            xdim = display_map.shape[0]
+            ydim = display_map.shape[1]
+
+            for y in range(ydim):
+                for x in range(xdim):
+                    print(display_map[x,y], end='')
+                print()
+
+        # build cells
+        cells = []
+        for x in range(map_width):
+            cell_column = []
+            for y in range(map_height):
+                cell_column.append(build_cell(x, y))
+            cells.append(cell_column)
+
+        # build display map
+        display_map = build_map(cells)
+
+        # print display map
+        print_display_map(display_map)
 
 
     def update(self, x, y, percept):
@@ -353,9 +423,8 @@ class Agent:
 
         self.direction = current_direction
 
+
 myagent = None
-
-
 
 # Input functions
 def PyAgent_Constructor ():
