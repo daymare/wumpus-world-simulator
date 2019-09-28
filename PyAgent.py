@@ -20,6 +20,19 @@ class Util():
         else:
             return Action.TURNRIGHT
 
+    @staticmethod
+    def add_row_seperator(display_map, ypos, cell_width):
+        plus_distance = 0 # distance until we need to 
+            # display another plus
+
+        # TODO double check shape is correct here
+        for xpos in range(display_map.shape[0]):
+            if plus_distance == 0:
+                display_map[xpos, ypos] = '+'
+                plus_distance = cell_width
+            else:
+                display_map[xpos, ypos] = '-'
+                plus_distance -= 1
 
 class Map:
     """ class for keeping track of the world map at any given time
@@ -35,7 +48,7 @@ class Map:
             6 - glitter
             7 - pit
             8 - wumpus
-
+        
     """
     def __init__(self):
         self.size_x = 4
@@ -63,17 +76,19 @@ class Map:
             each cell will then be stitched together to form the map
             then we print out the map
         """
-        symbol_map = 
+        # note that symbols cannot be numbers
+        # TODO validate symbol map
+        symbol_map = \
             {
-                0 : "ok",
-                1 : "V",
-                2 : "PP",
-                3 : "PW",
-                4 : "S",
-                5 : "B",
-                6 : "G",
-                7 : "P",
-                8 : "W"
+                '0' : "ok",
+                '1' : "V",
+                '2' : "PP",
+                '3' : "PW",
+                '4' : "S",
+                '5' : "B",
+                '6' : "G",
+                '7' : "P",
+                '8' : "W"
             }
         cell_layout = \
             [
@@ -86,13 +101,64 @@ class Map:
             ]
         cell_layout = np.array(cell_layout, dtype=np.character)
         cell_layout = np.transpose(cell_layout)
-        def build_cell(x, y):
-            x_dim = cell_layout.shape(1)
-            pass
 
+        # TODO double check cell layout shape is as expected
 
+        cell_width = cell_layout.shape[0]
+        cell_height = cell_layout.shape[1]
 
+        def build_cell(map_x, map_y):
+            """ build a display cell from the given map indecies
+            """
+            position = self.world_map[map_x, map_y]
 
+            xdim = cell_width
+            ydim = cell_height
+
+            cell = cell_layout.copy()
+
+            for x in range(xdim):
+                for y in range(ydim):
+                    if cell[x, y] in symbol_map:
+                        indicator = cell[x, y]
+                        symbol = symbol_map[indicator]
+
+                        # replace this character in the symbol map
+                        cell[x, y] = ''
+
+                        # check if the symbol exists at this position
+                        symbol_index = int(indicator)
+                        if position[symbol_index] == 1:
+                            for i in range(len(symbol)):
+                                cell[x+i, y] = symbol[i]
+            
+            return cell
+        def build_map(cells):
+            """ build a display map from a matrix of cells
+                dimensions should be (
+                    1 + (cell_width + 1) * num_cellsx, 
+                    1 + (cell_height + 1) * num_cellsy)
+            """
+            # TODO double check shape of world map is as expected
+            map_width = self.world_map.shape[0]
+            map_height = self.world_map.shape[1]
+
+            xdim = 1 + (cell_width + 1) * map_width
+            ydim = 1 + (cell_height + 1) * map_height
+
+            display_map = np.full((xdim, ydim), '')
+            xpos = 0
+            ypos = 0
+
+            # set first spacer
+            Util.add_row_seperator(display_map, 0, cell_width)
+            
+            for y in range(map_height):
+                # set the cells
+
+                # set the next spacer
+                pass
+            
 
 
 
