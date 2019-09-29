@@ -47,9 +47,9 @@ class Util():
     @staticmethod
     def add_cell_row(display_map, starting_ypos, cells_y, cells,
             cell_width, cell_height):
-        ypos = starting_pos
+        ypos = starting_ypos
 
-        cell_row = extract_cell_row(cells, cells_y)
+        cell_row = Util.extract_cell_row(cells, cells_y)
         xpos = 0
 
         for ydiff in range(cell_height):
@@ -60,7 +60,7 @@ class Util():
             xpos += 1
 
             for cell in cell_row:
-                for xdiff in cell_width:
+                for xdiff in range(cell_width):
                     display_map[xpos, ypos] = cell[xdiff, ydiff]
                     xpos += 1
 
@@ -91,11 +91,12 @@ class Map:
         
     """
     def __init__(self):
+        # TODO make map size expand with discovery
         self.size_x = 4
         self.size_y = 4
 
-        vector_dim = 9
-        world_map = np.zeros((self.size_x, self.size_y, vector_dim))
+        self.vector_dim = vector_dim = 9
+        self.world_map = np.zeros((self.size_x, self.size_y, vector_dim))
 
         self.index_map = {
             "ok" : 0,
@@ -132,12 +133,11 @@ class Map:
             }
         cell_layout = \
             [
-                ['', '0', '', '1', ''],
-                ['', '4', '', '5', ''],
-                ['', '7', '', '8', ''],
-                ['', '', '', '', ''],
-                ['-', '-', '-', '-', '-'],
-                ['', '2', '', '3', '']
+                [' ', '0', ' ', ' ', '1', ' ', ' '],
+                [' ', '4', ' ', ' ', '5', ' ', ' '],
+                [' ', '7', ' ', ' ', '8', ' ', ' '],
+                ['-', '-', '-', '-', '-', '-', '-'],
+                [' ', '2', ' ', ' ', '3', ' ', ' ']
             ]
         cell_layout = np.array(cell_layout, dtype=np.character)
         cell_layout = np.transpose(cell_layout)
@@ -162,12 +162,12 @@ class Map:
 
             for x in range(xdim):
                 for y in range(ydim):
-                    if cell[x, y] in symbol_map:
-                        indicator = cell[x, y]
+                    if cell[x, y].decode("utf-8") in symbol_map:
+                        indicator = cell[x, y].decode("utf-8")
                         symbol = symbol_map[indicator]
 
                         # replace this character in the symbol map
-                        cell[x, y] = ''
+                        cell[x, y] = ' '
 
                         # check if the symbol exists at this position
                         symbol_index = int(indicator)
@@ -199,7 +199,7 @@ class Map:
             
             for y in range(map_height):
                 # set the cells
-                ypos = add_cell_row(display_map, ypos, y, cells,
+                ypos = Util.add_cell_row(display_map, ypos, y, cells,
                         cell_width, cell_height)
 
                 # set the next spacer
@@ -224,6 +224,7 @@ class Map:
             for y in range(map_height):
                 cell_column.append(build_cell(x, y))
             cells.append(cell_column)
+        cells = np.array(cells)
 
         # build display map
         display_map = build_map(cells)
@@ -233,31 +234,36 @@ class Map:
 
 
     def update(self, x, y, percept):
+        # TODO handle screams
         # ensure current position is set visited and OK
-        world_map[x, y, self.index_map["ok"]] = 1
-        world_map[x, y, self.index_map["visited"]] = 1
+        self.world_map[x, y, self.index_map["ok"]] = 1
+        self.world_map[x, y, self.index_map["visited"]] = 1
+        self.world_map[x, y, self.index_map["possible_wumpus"]] = 0
+        self.world_map[x, y, self.index_map["possible_pit"]] = 0
 
         # handle glitter
         if percept["glitter"] is True:
-            world_map[x, y, self.index_map["glitter"]] = 1
+            self.world_map[x, y, self.index_map["glitter"]] = 1
+        else:
+            self.world_map[x, y, self.index_map["glitter"]] = 0
 
         # handle stenches
         if percept["stench"] is True:
-            world_map[x, y, self.index_map["stench"]] = 1
+            self.world_map[x, y, self.index_map["stench"]] = 1
             self._update_neighbors(x, y, "stench")
         else:
             self._update_neighbors(x, y, "no_stench")
 
         # handle breezes
         if percept["breeze"] is True:
-            world_map[x, y, self.index_map["breeze"]] = 1
+            self.world_map[x, y, self.index_map["breeze"]] = 1
             self._update_neighbors(x, y, "breeze")
         else:
             self._update_neighbors(x, y, "no_breeze")
 
 
     def get_pos(self, x, y):
-        return world_map[x, y]
+        return self.world_map[x, y]
 
     def get_flat_map(self):
         return world_map.flatten()
@@ -269,19 +275,19 @@ class Map:
             cy = pos[1]
 
             if value == "stench":
-                if world_map[cx, cy, self.index_map["ok"]] != 1:
-                    world_map[cx, cy, self.index_map["possible_wumpus"]] = 1
+                self.world_map[cx, cy, self.index_map["possible_wumpus"]] = 1
+                self.world_map[cx, cy, self.index_map["ok"]] = 0
             elif value == "breeze":
-                if world_map[cx, cy, self.index_map["ok"]] != 1:
-                    world_map[cx, cy, self.index_map["possible_pit"]] = 1
+                self.world_map[cx, cy, self.index_map["possible_pit"]] = 1
+                self.world_map[cx, cy, self.index_map["ok"]] = 0
             elif value == "no_breeze":
-                world_map[cx, cy, self.index_map["possible_pit"]] = 0
-                if world_map[cx, cy, self.index_map["possible_wumpus"]] == 0:
-                    world_map[cx, cy, self.index_map["ok"]] = 1
+                self.world_map[cx, cy, self.index_map["possible_pit"]] = 0
+                if self.world_map[cx, cy, self.index_map["possible_wumpus"]] == 0:
+                    self.world_map[cx, cy, self.index_map["ok"]] = 1
             elif value == "no_stench":
-                world_map[cx, cy, self.index_map["possible_wumpus"]] = 0
-                if world_map[cx, cy, self.index_map["possible_pit"]] == 0:
-                    world_map[cx, cy, self.index_map["ok"]] = 1
+                self.world_map[cx, cy, self.index_map["possible_wumpus"]] = 0
+                if self.world_map[cx, cy, self.index_map["possible_pit"]] == 0:
+                    self.world_map[cx, cy, self.index_map["ok"]] = 1
 
     def _get_neighbors(self, x, y):
         min_x = 0
@@ -291,14 +297,14 @@ class Map:
 
         if x > 0:
             min_x = -1
-        if x < self.size_x:
+        if x < self.size_x - 1:
             max_x = 1
         if y > 0:
             min_y = -1
-        if y < self.size_y:
+        if y < self.size_y - 1:
             max_y = 1
 
-        for nx in range(x - minx, x + max_x + 1):
+        for nx in range(x - min_x, x + max_x + 1):
             if nx != x:
                 yield (nx, y)
         for ny in range(y - min_y, y + max_y + 1):
@@ -325,6 +331,7 @@ class Agent:
         self.direction = "east"
         self.hasgold = False
         self.hasarrow = True
+        self.world_map = Map()
 
     def process(self, stench, breeze, glitter, bump, scream):
         """ process the percept and return desired action
@@ -336,9 +343,21 @@ class Agent:
             bump - boolean, whether bump has resulted from the last action
             scream - boolean, whether scream has resulted from the last action
         """
+        # pack up the percept
+        percept = {
+            "stench" : stench,
+            "breeze" : breeze,
+            "glitter" : glitter,
+            "bump" : bump,
+            "scream" : scream
+        }
+
         # update location
         if self.last_action == Action.GOFORWARD and bump is False:
             self.update_location()
+
+        # update map
+        self.world_map.update(self.x - 1, self.y - 1, percept)
 
         current_action = None
 
@@ -366,6 +385,15 @@ class Agent:
         # part e: if nothing else go straight
         else:
             current_action = Action.GOFORWARD
+
+        # print out stuff
+        print("position: {}, {}".format(self.x, self.y))
+        print("direction: {}".format(self.direction))
+        print("have gold: {}".format(self.hasgold))
+        print()
+        print()
+        self.world_map.print()
+        print(end='', flush=True)
 
         self.last_action = current_action
         return current_action
