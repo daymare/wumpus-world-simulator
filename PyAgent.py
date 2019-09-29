@@ -95,6 +95,9 @@ class Map:
         self.size_x = 4
         self.size_y = 4
 
+        self.seen_scream = False
+        self.found_wumpus = False
+
         self.vector_dim = vector_dim = 9
         self.world_map = np.zeros((self.size_x, self.size_y, vector_dim))
 
@@ -118,7 +121,6 @@ class Map:
             then we print out the map
         """
         # note that symbols cannot be numbers
-        # TODO validate symbol map
         symbol_map = \
             {
                 '0' : "ok",
@@ -131,12 +133,16 @@ class Map:
                 '7' : "P",
                 '8' : "W"
             }
+        negated_symbol_map = \
+            {
+                '2' : "NP",
+                '3' : "NW"
+            }
         cell_layout = \
             [
                 [' ', '0', ' ', ' ', '1', ' ', ' '],
                 [' ', '4', ' ', ' ', '5', ' ', ' '],
                 [' ', '7', ' ', ' ', '8', ' ', ' '],
-                ['-', '-', '-', '-', '-', '-', '-'],
                 [' ', '2', ' ', ' ', '3', ' ', ' ']
             ]
         cell_layout = np.array(cell_layout, dtype=np.character)
@@ -165,6 +171,8 @@ class Map:
                     if cell[x, y].decode("utf-8") in symbol_map:
                         indicator = cell[x, y].decode("utf-8")
                         symbol = symbol_map[indicator]
+                        if indicator in negated_symbol_map:
+                            negated_symbol = negated_symbol_map[indicator]
 
                         # replace this character in the symbol map
                         cell[x, y] = ' '
@@ -174,6 +182,9 @@ class Map:
                         if position[symbol_index] == 1:
                             for i in range(len(symbol)):
                                 cell[x+i, y] = symbol[i]
+                        elif position[symbol_index] == -1:
+                            for i in range(len(negated_symbol)):
+                                cell[x+i, y] = negated_symbol[i]
             
             return cell
 
@@ -234,12 +245,17 @@ class Map:
 
 
     def update(self, x, y, percept):
-        # TODO handle screams
         # ensure current position is set visited and OK
         self.world_map[x, y, self.index_map["ok"]] = 1
         self.world_map[x, y, self.index_map["visited"]] = 1
         self.world_map[x, y, self.index_map["possible_wumpus"]] = 0
         self.world_map[x, y, self.index_map["possible_pit"]] = 0
+
+        # handle screams
+        if percept["scream"] is True:
+            self.seen_scream = True
+            self.found_wumpus = True
+            self._clear_wumpus()
 
         # handle glitter
         if percept["glitter"] is True:
@@ -248,7 +264,7 @@ class Map:
             self.world_map[x, y, self.index_map["glitter"]] = 0
 
         # handle stenches
-        if percept["stench"] is True:
+        if percept["stench"] is True and self.seen_scream == False:
             self.world_map[x, y, self.index_map["stench"]] = 1
             self._update_neighbors(x, y, "stench")
         else:
@@ -261,6 +277,15 @@ class Map:
         else:
             self._update_neighbors(x, y, "no_breeze")
 
+        # handle safety
+        if (percept["stench"] is False or self.seen_scream == True) \
+            and percept["breeze"] is False:
+            self._update_neighbors(x, y, "ok")
+
+        # double check possibilities
+        if percept["stench"] is False or percept["breeze"] is False:
+            # double check if any neighbors are now ok
+            self._update_neighbors(x, y, "check_ok")
 
     def get_pos(self, x, y):
         return self.world_map[x, y]
@@ -268,26 +293,110 @@ class Map:
     def get_flat_map(self):
         return world_map.flatten()
 
+    def get(self, x, y, index):
+        return self.world_map[x, y, self.index_map[index]]
+
+    def set(self, x, y, index, value):
+        self.world_map[x, y, self.index_map[index]] = value
+
+    def _clear_wumpus(self):
+        for x in range(self.size_x):
+            for y in range(self.size_y):
+                self.set(x, y, "possible_wumpus", -1)
+                self.set(x, y, "stench", 0)
+                self.set(x, y, "wumpus", 0)
+
+                # check if this makes any new locations ok
+                if self.get(x, y, "breeze") == 0 \
+                    and self.get(x, y, "stench") == 0 \
+                    and self.get(x, y, "visited") == 1:
+                    self._update_neighbors(x, y, "ok")
+
+    def _clear_possible_wumpus(self):
+        for x in range(self.size_x):
+            for y in range(self.size_y):
+                self.set(x, y, "possible_wumpus", 0)
+                if self.get(x, y, "possible_pit") == 0:
+                    self.set(x, y, "ok", 1)
+
     def _update_neighbors(self, x, y, value):
-        # TODO handle logical inference on pits and wumpus
         for pos in self._get_neighbors(x, y):
             cx = pos[0]
             cy = pos[1]
 
             if value == "stench":
-                self.world_map[cx, cy, self.index_map["possible_wumpus"]] = 1
-                self.world_map[cx, cy, self.index_map["ok"]] = 0
+                if self.get(cx, cy, "ok") != 1 \
+                    and self.get(cx, cy, "possible_wumpus") != -1:
+                    self.set(cx, cy, "possible_wumpus", 1)
+
             elif value == "breeze":
-                self.world_map[cx, cy, self.index_map["possible_pit"]] = 1
-                self.world_map[cx, cy, self.index_map["ok"]] = 0
+                if self.get(cx, cy, "ok") != 1 \
+                    and self.get(cx, cy, "possible_pit") != -1:
+                    self.set(cx, cy, "possible_pit", 1)
+
             elif value == "no_breeze":
-                self.world_map[cx, cy, self.index_map["possible_pit"]] = 0
-                if self.world_map[cx, cy, self.index_map["possible_wumpus"]] == 0:
-                    self.world_map[cx, cy, self.index_map["ok"]] = 1
+                run_check = False
+                if self.get(cx, cy, "possible_pit") == 1:
+                    run_check = True
+                self.set(cx, cy, "possible_pit", -1)
+                if run_check == True:
+                    self._update_neighbors(cx, cy, "check_pit")
+
             elif value == "no_stench":
-                self.world_map[cx, cy, self.index_map["possible_wumpus"]] = 0
-                if self.world_map[cx, cy, self.index_map["possible_pit"]] == 0:
-                    self.world_map[cx, cy, self.index_map["ok"]] = 1
+                run_check = False
+                if self.get(cx, cy, "possible_wumpus") == 1:
+                    run_check = True
+                self.set(cx, cy, "possible_wumpus", -1)
+                if run_check == True:
+                    self._update_neighbors(cx, cy, "check_wumpus")
+
+            elif value == "ok":
+                self.set(cx, cy, "ok", 1)
+
+            elif value == "check_pit":
+                self._check_found(cx, cy, "breeze")
+
+            elif value == "check_wumpus":
+                self._check_found(cx, cy, "stench")
+
+            elif value == "check_ok":
+                if self.get(cx, cy, "possible_wumpus") == -1 \
+                    and self.get(cx, cy, "possible_pit") == -1:
+                    self.set(cx, cy, "ok", 1)
+
+        # handle finding a pit or wumpus
+        self._check_found(x, y, value)
+
+    def _check_found(self, x, y, value):
+        if value != "stench" or value != "breeze":
+            return
+
+        if self.get(x, y, value) == 1:
+            if value == "stench" and self.found_wumpus == False:
+                # check if we know wumpus is neighboring
+                possible_wumpi = self._find_neighboring(x, y, "possible_wumpus")
+                if len(possible_wumpi) == 1:
+                    self.found_wumpus = True
+                    wumpus_pos = possible_wumpi[0]
+                    self.set(wumpus_pos[0], wumpus_pos[1], "wumpus", 1)
+                    self._clear_possible_wumpus()
+
+            elif value == "breeze":
+                # find neighboring pp and mark it pit
+                possible_pits = self._find_neighboring(x, y, "possible_pit")
+                actual_pits = self._find_neighboring(x, y, "pit")
+                if len(possible_pits) == 1 and len(actual_pits) == 0:
+                    pit_pos = possible_pits[0]
+                    self.set(pit_pos[0], pit_pos[1], "pit", 1)
+                    self.set(pit_pos[0], pit_pos[1], "possible_pit", 0)
+
+
+    def _find_neighboring(self, x, y, index):
+        neighboring = []
+        for (cx, cy) in self._get_neighbors(x, y):
+            if self.get(cx, cy, index) == 1:
+                neighboring.append((cx, cy))
+        return neighboring
 
     def _get_neighbors(self, x, y):
         min_x = 0
@@ -304,10 +413,10 @@ class Map:
         if y < self.size_y - 1:
             max_y = 1
 
-        for nx in range(x - min_x, x + max_x + 1):
+        for nx in range(x + min_x, x + max_x + 1):
             if nx != x:
                 yield (nx, y)
-        for ny in range(y - min_y, y + max_y + 1):
+        for ny in range(y + min_y, y + max_y + 1):
             if ny != y:
                 yield (x, ny)
 
@@ -326,8 +435,8 @@ class Agent:
 
     def initialize(self):
         self.last_action = None
-        self.x = 1
-        self.y = 1
+        self.x = 0
+        self.y = 0
         self.direction = "east"
         self.hasgold = False
         self.hasarrow = True
@@ -357,7 +466,7 @@ class Agent:
             self.update_location()
 
         # update map
-        self.world_map.update(self.x - 1, self.y - 1, percept)
+        self.world_map.update(self.x, self.y, percept)
 
         current_action = None
 
@@ -367,8 +476,8 @@ class Agent:
             current_action = Action.GRAB
 
         #  part b: if can win then win
-        elif self.x == 1 and \
-            self.y == 1 and \
+        elif self.x == 0 and \
+            self.y == 0 and \
             self.hasgold is True:
             current_action = Action.CLIMB
 
