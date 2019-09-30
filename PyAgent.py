@@ -1,6 +1,8 @@
 # PyAgent.py
 
 import random
+import heapq
+import copy
 
 #import tensorflow as tf
 import numpy as np
@@ -99,7 +101,7 @@ class Map:
         self.found_wumpus = False
 
         self.vector_dim = vector_dim = 9
-        self.world_map = np.zeros((self.size_x, self.size_y, vector_dim))
+        self.world_map = np.zeros((self.size_x, self.size_y, vector_dim), dtype=np.int)
 
         self.index_map = {
             "ok" : 0,
@@ -217,6 +219,8 @@ class Map:
                 Util.add_row_separator(display_map, ypos, cell_width)
                 ypos += 1
 
+            display_map = np.flip(display_map, axis=1)
+
             return display_map
 
         def print_display_map(display_map):
@@ -264,7 +268,8 @@ class Map:
             self.world_map[x, y, self.index_map["glitter"]] = 0
 
         # handle stenches
-        if percept["stench"] is True and self.seen_scream == False:
+        if percept["stench"] is True and self.seen_scream == False\
+                and self.found_wumpus == False:
             self.world_map[x, y, self.index_map["stench"]] = 1
             self._update_neighbors(x, y, "stench")
         else:
@@ -286,6 +291,72 @@ class Map:
         if percept["stench"] is False or percept["breeze"] is False:
             # double check if any neighbors are now ok
             self._update_neighbors(x, y, "check_ok")
+
+    def get_path(self, startx, starty, destination=None):
+        """ return a path to the nearest safe unvisited location
+            if destination is specified then return shortest path to that
+            destination
+
+            will only use safe paths
+
+            if no safe unvisited locations or no path to destination
+                will return None
+        """
+        # TODO factor in turning time into the cost
+        class Location:
+            def __init__(self, x, y, val, path):
+                self.x = x
+                self.y = y
+                self.val = val
+                self.path = path
+
+            def __lt__(self, other):
+                return self.val < other.val
+
+            def __str__(self):
+                return "({}, {}, {})".format(self.x, self.y, self.val)
+
+        # add first element to frontier
+        start_loc = Location(startx, starty, 0, [(startx, starty)])
+
+        frontier = [start_loc]
+        touched = set()
+    
+        while len(frontier) > 0:
+            # get current best node
+            current = heapq.heappop(frontier)
+            cx = current.x
+            cy = current.y
+
+            # check if this node has been touched before
+            pos = (cx, cy)
+            if pos in touched:
+                continue
+            else:
+                touched.add(pos)
+
+            # check if this node is a goal
+            if destination is not None:
+                if cx == destination[0] and cy == destination[1]:
+                    return current.path
+            else:
+                if self.get(cx, cy, "ok") == 1 \
+                and self.get(cx, cy, "visited") == 0:
+                    return current.path
+
+            # expand current node
+            for nx, ny in self._get_neighbors(cx, cy):
+                # check if neighbor is valid
+                if self.get(nx, ny, "ok") == 1:
+                    # add to frontier
+                    new_path = copy.deepcopy(current.path)
+                    new_path.append((nx, ny))
+                    neighbor_loc = Location(nx, ny, current.val + 1, new_path)
+                    heapq.heappush(frontier, neighbor_loc)
+
+        # couldn't find anything return None
+        return None
+
 
     def get_pos(self, x, y):
         return self.world_map[x, y]
@@ -316,8 +387,13 @@ class Map:
         for x in range(self.size_x):
             for y in range(self.size_y):
                 self.set(x, y, "possible_wumpus", 0)
-                if self.get(x, y, "possible_pit") == 0:
-                    self.set(x, y, "ok", 1)
+                self.set(x, y, "stench", 0)
+
+                # check if this makes any new locations ok
+                if self.get(x, y, "breeze") == 0 \
+                    and self.get(x, y, "stench") == 0 \
+                    and self.get(x, y, "visited") == 1:
+                    self._update_neighbors(x, y, "ok")
 
     def _update_neighbors(self, x, y, value):
         for pos in self._get_neighbors(x, y):
@@ -351,7 +427,9 @@ class Map:
                     self._update_neighbors(cx, cy, "check_wumpus")
 
             elif value == "ok":
-                self.set(cx, cy, "ok", 1)
+                if self.get(cx, cy, "wumpus") != 1 \
+                    and self.get(cx, cy, "pit") != 1:
+                    self.set(cx, cy, "ok", 1)
 
             elif value == "check_pit":
                 self._check_found(cx, cy, "breeze")
@@ -361,14 +439,17 @@ class Map:
 
             elif value == "check_ok":
                 if self.get(cx, cy, "possible_wumpus") == -1 \
-                    and self.get(cx, cy, "possible_pit") == -1:
+                    and self.get(cx, cy, "possible_pit") == -1 \
+                    and self.get(cx, cy, "pit") != 1 \
+                    and self.get(cx, cy, "wumpus") != 1:
                     self.set(cx, cy, "ok", 1)
 
         # handle finding a pit or wumpus
         self._check_found(x, y, value)
 
     def _check_found(self, x, y, value):
-        if value != "stench" or value != "breeze":
+        # TODO check for possible wumpus with multiple stenches
+        if value != "stench" and value != "breeze":
             return
 
         if self.get(x, y, value) == 1:
@@ -441,6 +522,8 @@ class Agent:
         self.hasgold = False
         self.hasarrow = True
         self.world_map = Map()
+        self.path = []
+        self.leave = False
 
     def process(self, stench, breeze, glitter, bump, scream):
         """ process the percept and return desired action
@@ -470,45 +553,127 @@ class Agent:
 
         current_action = None
 
-        # part a: if glitter then grab gold
+        # set up a path if we need one
+        if len(self.path) <= 1:
+            # if have gold then go to start
+            if self.hasgold is True:
+                self.path = self.world_map.get_path(self.x, self.y, (0, 0))
+
+            # if nothing else then go to nearest safe place
+            self.path = self.world_map.get_path(self.x, self.y)
+            if self.path is None:
+                # no more reachable safe places
+                # try to leave
+                self.path = self.world_map.get_path(self.x, self.y, (0, 0))
+                self.leave = True
+
+        # if glitter then grab gold
         if glitter is True:
             self.hasgold = True
             current_action = Action.GRAB
+            self.path = self.world_map.get_path(self.x, self.y, (0, 0))
 
-        #  part b: if can win then win
+        #  if can win then win
         elif self.x == 0 and \
             self.y == 0 and \
-            self.hasgold is True:
+            self.hasgold is True and \
+            current_action is None:
             current_action = Action.CLIMB
 
-        # part c: if stench and arrow then shoot
-        elif stench is True and self.hasarrow is True:
-            self.hasarrow = False
-            current_action = Action.SHOOT
+        # if we want to leave then leave
+        if self.x == 0 and \
+            self.y == 0 and \
+            self.leave is True and \
+            current_action is None:
+            current_action = Action.CLIMB
 
-        # part d: if bump then left or right
-        elif bump is True:
-            current_action = Util.get_random_lr()
-            self.update_orientation(current_action)
 
-        # part e: if nothing else go straight
-        else:
-            current_action = Action.GOFORWARD
+        # if have path to follow then follow path
+        if len(self.path) > 1 and current_action is None:
+            current_action = self.follow_path(self.path)
 
         # print out stuff
         print("position: {}, {}".format(self.x, self.y))
         print("direction: {}".format(self.direction))
-        print("have gold: {}".format(self.hasgold))
         print()
         print()
         self.world_map.print()
+        print()
+        print()
+        print("current path: {}".format(self.path))
         print(end='', flush=True)
+
+        # if turn action then update orientation
+        if current_action == Action.TURNLEFT \
+            or current_action == Action.TURNRIGHT:
+                self.update_orientation(current_action)
+
+        assert current_action is not None
 
         self.last_action = current_action
         return current_action
 
     def gameover(self):
         pass
+
+    def follow_path(self, path):
+        """ get the action to take to follow the given path
+            maintain the path along the way.
+
+            first node in path should be your current location
+        """
+        assert path[0][0] == self.x and path[0][1] == self.y
+
+        def get_direction(loc0, loc1):
+            xdiff = loc1[0] - loc0[0]
+            ydiff = loc1[1] - loc0[1]
+
+            # one and only one of these should be nonzero
+            assert (xdiff != 0) != (ydiff != 0)
+
+            if xdiff > 0:
+                return "east"
+            elif xdiff < 0:
+                return "west"
+            elif ydiff > 0:
+                return "north"
+            elif ydiff < 0:
+                return "south"
+            raise Exception("how did we get here?!")
+        
+        def get_turn_direction(desired_direction, current_direction):
+            # TODO a little inelegant/ineffecient
+            direction_map = {
+                    "north" : 0,
+                    "east" : 1,
+                    "south" : 2,
+                    "west" : 3                    
+                    }
+            
+            desired_direction = direction_map[desired_direction]
+            current_direction = direction_map[current_direction]
+
+            # right turn
+            rt_direction = current_direction
+            lt_direction = current_direction
+            while True:
+                rt_direction += 1
+                lt_direction -= 1
+                rt_direction = rt_direction % 4
+                lt_direction = lt_direction % 4
+                
+                if rt_direction == desired_direction:
+                    return Action.TURNRIGHT
+                elif lt_direction == desired_direction:
+                    return Action.TURNLEFT
+        
+        desired_direction = get_direction(path[0], path[1])
+
+        if desired_direction == self.direction:
+            path.pop(0)
+            return Action.GOFORWARD
+        else:
+            return get_turn_direction(desired_direction, self.direction)
 
     def update_location(self):
         """ update the location on goforward action
