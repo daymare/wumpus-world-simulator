@@ -100,6 +100,8 @@ class Map:
         self.seen_scream = False
         self.found_wumpus = False
 
+        self.gold_loc = None
+
         self.vector_dim = vector_dim = 9
         self.world_map = np.zeros((self.size_x, self.size_y, vector_dim), dtype=np.int)
 
@@ -264,6 +266,7 @@ class Map:
         # handle glitter
         if percept["glitter"] is True:
             self.world_map[x, y, self.index_map["glitter"]] = 1
+            self.gold_loc = (x, y)
         else:
             self.world_map[x, y, self.index_map["glitter"]] = 0
 
@@ -363,6 +366,12 @@ class Map:
 
     def get_flat_map(self):
         return world_map.flatten()
+
+    def found_gold(self):
+        return self.gold_loc is not None
+
+    def get_gold_loc(self):
+        return self.gold_loc
 
     def get(self, x, y, index):
         return self.world_map[x, y, self.index_map[index]]
@@ -510,18 +519,19 @@ class Agent:
         self.y = None
         self.direction = None
         self.hasgold = None
+        self.world_map = Map()
 
     def destructor(self):
         pass
 
     def initialize(self):
+        print("call to initialize")
         self.last_action = None
         self.x = 0
         self.y = 0
         self.direction = "east"
         self.hasgold = False
         self.hasarrow = True
-        self.world_map = Map()
         self.path = []
         self.leave = False
 
@@ -559,13 +569,19 @@ class Agent:
             if self.hasgold is True:
                 self.path = self.world_map.get_path(self.x, self.y, (0, 0))
 
+            # if map has found gold then go there
+            elif self.world_map.found_gold() and self.hasgold is False:
+                gold_loc = self.world_map.get_gold_loc()
+                self.path = self.world_map.get_path(self.x, self.y, gold_loc)
+
             # if nothing else then go to nearest safe place
-            self.path = self.world_map.get_path(self.x, self.y)
-            if self.path is None:
-                # no more reachable safe places
-                # try to leave
-                self.path = self.world_map.get_path(self.x, self.y, (0, 0))
-                self.leave = True
+            else:
+                self.path = self.world_map.get_path(self.x, self.y)
+                if self.path is None:
+                    # no more reachable safe places
+                    # try to leave
+                    self.path = self.world_map.get_path(self.x, self.y, (0, 0))
+                    self.leave = True
 
         # if glitter then grab gold
         if glitter is True:
@@ -614,7 +630,7 @@ class Agent:
         return current_action
 
     def gameover(self):
-        pass
+        print("call to gameover")
 
     def follow_path(self, path):
         """ get the action to take to follow the given path
