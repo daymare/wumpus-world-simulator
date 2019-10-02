@@ -97,7 +97,6 @@ class Util():
             return "south"
         raise Exception("how did we get here?!")
 
-
 class Map:
     """ class for keeping track of the world map at any given time
         
@@ -422,9 +421,7 @@ class Map:
                     new_path.append((nx, ny))
                     neighbor_loc = Location(nx, ny, None, 0, new_path)
                     # get cost of node
-                    print("current direction: {}".format(current.direction))
                     cost, neighbor_direction = get_turn_cost(current, neighbor_loc)
-                    print("neighbor direction: {}".format(neighbor_direction))
                     # plus one for the action of moving to the node
                     cost += 1
                     neighbor_loc.direction = neighbor_direction
@@ -533,7 +530,6 @@ class Map:
         self._check_found(x, y, value)
 
     def _check_found(self, x, y, value):
-        # TODO check for possible wumpus with multiple stenches
         if value != "stench" and value != "breeze" \
             and value != "possible_wumpus":
             return
@@ -654,32 +650,32 @@ class Agent:
             # if have gold then go to start
             if self.hasgold is True:
                 print("setting path with hasgold")
-                self.path = self.world_map.get_path(self.x, self.y, (0, 0))
-            print("path after hasgold: {}".format(self.path))
-
+                self.path = self.world_map.get_path(self.x, self.y, self.direction, (0, 0))
+            
             # if map has found gold then go there
-            elif self.world_map.found_gold() is True and self.hasgold is False:
+            elif (self.world_map.found_gold() is True) and self.hasgold is False:
                 print("setting path with found gold")
                 gold_loc = self.world_map.get_gold_loc()
-                self.path = self.world_map.get_path(self.x, self.y, gold_loc)
-            print("path after hasgold: {}".format(self.path))
+                self.path = self.world_map.get_path(self.x, self.y, self.direction, gold_loc)
 
             # if nothing else then go to nearest safe place
             else:
                 print("setting path with nearest safe")
                 self.path = self.world_map.get_path(self.x, self.y, self.direction)
+                print("path after set: {}".format(self.path))
 
                 if self.path is None:
                     # no more reachable safe places
                     # try to leave
-                    self.path = self.world_map.get_path(self.x, self.y, (0, 0))
+                    self.path = self.world_map.get_path(self.x, self.y, self.direction, (0, 0))
                     self.leave = True
+        print("path after setup path: {}".format(self.path))
 
         # if glitter then grab gold
         if glitter is True:
             self.hasgold = True
             current_action = Action.GRAB
-            self.path = self.world_map.get_path(self.x, self.y, (0, 0))
+            self.path = self.world_map.get_path(self.x, self.y, self.direction, (0, 0))
 
         #  if can win then win
         elif self.x == 0 and \
