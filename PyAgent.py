@@ -74,6 +74,28 @@ class Util():
         final_y = ypos
 
         return final_y
+        
+    @staticmethod
+    def get_direction(loc0, loc1):
+        """ loc0 and loc1 are tuples of (x, y)
+
+            loc 1 is desired location
+        """
+        xdiff = loc1[0] - loc0[0]
+        ydiff = loc1[1] - loc0[1]
+
+        # one and only one of these should be nonzero
+        assert (xdiff != 0) != (ydiff != 0)
+
+        if xdiff > 0:
+            return "east"
+        elif xdiff < 0:
+            return "west"
+        elif ydiff > 0:
+            return "north"
+        elif ydiff < 0:
+            return "south"
+        raise Exception("how did we get here?!")
 
 
 class Map:
@@ -295,7 +317,7 @@ class Map:
             # double check if any neighbors are now ok
             self._update_neighbors(x, y, "check_ok")
 
-    def get_path(self, startx, starty, destination=None):
+    def get_path(self, startx, starty, start_direction, destination=None):
         """ return a path to the nearest safe unvisited location
             if destination is specified then return shortest path to that
             destination
@@ -307,11 +329,13 @@ class Map:
         """
         # TODO factor in turning time into the cost
         class Location:
-            def __init__(self, x, y, val, path):
+            def __init__(self, x, y, direction, val, path):
                 self.x = x
                 self.y = y
                 self.val = val
                 self.path = path
+                # direction when we entered this location
+                self.direction = direction
 
             def __lt__(self, other):
                 return self.val < other.val
@@ -319,8 +343,50 @@ class Map:
             def __str__(self):
                 return "({}, {}, {})".format(self.x, self.y, self.val)
 
+        def get_turn_cost(loc0, loc1):
+            """ return turn cost and resulting direction
+            """
+            def get_cost(desired_direction, current_direction):
+                direction_map = {
+                        "north" : 0,
+                        "east" : 1,
+                        "south" : 2,
+                        "west" : 3                    
+                        }
+                
+                desired_direction = direction_map[desired_direction]
+                current_direction = direction_map[current_direction]
+
+                if desired_direction == current_direction:
+                    return 0
+
+                # right turn
+                rt_direction = current_direction
+                lt_direction = current_direction
+                distance = 0
+
+                while True:
+                    rt_direction += 1
+                    lt_direction -= 1
+                    rt_direction = rt_direction % 4
+                    lt_direction = lt_direction % 4
+                    distance += 1
+                    
+                    if rt_direction == desired_direction \
+                        or lt_direction == desired_direction:
+                        return distance
+
+            pos0 = (loc0.x, loc0.y)
+            pos1 = (loc1.x, loc1.y)
+            desired_direction = Util.get_direction(pos0, pos1)
+
+            cost = get_cost(desired_direction, loc0.direction)
+
+            return cost, desired_direction
+
         # add first element to frontier
-        start_loc = Location(startx, starty, 0, [(startx, starty)])
+        start_loc = Location(startx, starty, start_direction, 0, 
+                [(startx, starty)])
 
         frontier = [start_loc]
         touched = set()
@@ -354,7 +420,16 @@ class Map:
                     # add to frontier
                     new_path = copy.deepcopy(current.path)
                     new_path.append((nx, ny))
-                    neighbor_loc = Location(nx, ny, current.val + 1, new_path)
+                    neighbor_loc = Location(nx, ny, None, 0, new_path)
+                    # get cost of node
+                    print("current direction: {}".format(current.direction))
+                    cost, neighbor_direction = get_turn_cost(current, neighbor_loc)
+                    print("neighbor direction: {}".format(neighbor_direction))
+                    # plus one for the action of moving to the node
+                    cost += 1
+                    neighbor_loc.direction = neighbor_direction
+                    neighbor_loc.val = current.val + cost
+
                     heapq.heappush(frontier, neighbor_loc)
 
         # couldn't find anything return None
@@ -413,6 +488,7 @@ class Map:
                 if self.get(cx, cy, "ok") != 1 \
                     and self.get(cx, cy, "possible_wumpus") != -1:
                     self.set(cx, cy, "possible_wumpus", 1)
+                    self._check_found(cx, cy, "possible_wumpus")
 
             elif value == "breeze":
                 if self.get(cx, cy, "ok") != 1 \
@@ -458,7 +534,8 @@ class Map:
 
     def _check_found(self, x, y, value):
         # TODO check for possible wumpus with multiple stenches
-        if value != "stench" and value != "breeze":
+        if value != "stench" and value != "breeze" \
+            and value != "possible_wumpus":
             return
 
         if self.get(x, y, value) == 1:
@@ -480,6 +557,14 @@ class Map:
                     self.set(pit_pos[0], pit_pos[1], "pit", 1)
                     self.set(pit_pos[0], pit_pos[1], "possible_pit", 0)
 
+            elif value == "possible_wumpus" and self.found_wumpus == False:
+                stenches = self._find_neighboring(x, y, "stench")
+                # if more than one stench surrounding we know this is the wumpus
+                if len(stenches) > 1:
+                    # mark that we found the wumpus
+                    self.found_wumpus = True
+                    self.set(x, y, "wumpus", 1)
+                    self._clear_possible_wumpus()
 
     def _find_neighboring(self, x, y, index):
         neighboring = []
@@ -565,18 +650,25 @@ class Agent:
 
         # set up a path if we need one
         if len(self.path) <= 1:
+            print("path in setup: {}".format(self.path))
             # if have gold then go to start
             if self.hasgold is True:
+                print("setting path with hasgold")
                 self.path = self.world_map.get_path(self.x, self.y, (0, 0))
+            print("path after hasgold: {}".format(self.path))
 
             # if map has found gold then go there
-            elif self.world_map.found_gold() and self.hasgold is False:
+            elif self.world_map.found_gold() is True and self.hasgold is False:
+                print("setting path with found gold")
                 gold_loc = self.world_map.get_gold_loc()
                 self.path = self.world_map.get_path(self.x, self.y, gold_loc)
+            print("path after hasgold: {}".format(self.path))
 
             # if nothing else then go to nearest safe place
             else:
-                self.path = self.world_map.get_path(self.x, self.y)
+                print("setting path with nearest safe")
+                self.path = self.world_map.get_path(self.x, self.y, self.direction)
+
                 if self.path is None:
                     # no more reachable safe places
                     # try to leave
@@ -640,23 +732,6 @@ class Agent:
         """
         assert path[0][0] == self.x and path[0][1] == self.y
 
-        def get_direction(loc0, loc1):
-            xdiff = loc1[0] - loc0[0]
-            ydiff = loc1[1] - loc0[1]
-
-            # one and only one of these should be nonzero
-            assert (xdiff != 0) != (ydiff != 0)
-
-            if xdiff > 0:
-                return "east"
-            elif xdiff < 0:
-                return "west"
-            elif ydiff > 0:
-                return "north"
-            elif ydiff < 0:
-                return "south"
-            raise Exception("how did we get here?!")
-        
         def get_turn_direction(desired_direction, current_direction):
             # TODO a little inelegant/ineffecient
             direction_map = {
@@ -683,7 +758,7 @@ class Agent:
                 elif lt_direction == desired_direction:
                     return Action.TURNLEFT
         
-        desired_direction = get_direction(path[0], path[1])
+        desired_direction = Util.get_direction(path[0], path[1])
 
         if desired_direction == self.direction:
             path.pop(0)
