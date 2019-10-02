@@ -23,7 +23,7 @@ class Util():
             return Action.TURNRIGHT
 
     @staticmethod
-    def add_row_separator(display_map, ypos, cell_width):
+    def add_row_separator(display_map, ypos, cell_width, border=False):
         plus_distance = 0 # distance until we need to 
             # display another plus
 
@@ -33,7 +33,10 @@ class Util():
                 display_map[xpos, ypos] = '+'
                 plus_distance = cell_width
             else:
-                display_map[xpos, ypos] = '-'
+                if border is False:
+                    display_map[xpos, ypos] = '-'
+                else:
+                    display_map[xpos, ypos] = '='
                 plus_distance -= 1
 
     @staticmethod
@@ -48,7 +51,7 @@ class Util():
 
     @staticmethod
     def add_cell_row(display_map, starting_ypos, cells_y, cells,
-            cell_width, cell_height):
+            cell_width, cell_height, border=-1):
         ypos = starting_ypos
 
         cell_row = Util.extract_cell_row(cells, cells_y)
@@ -61,14 +64,20 @@ class Util():
             display_map[xpos, ypos] = '|'
             xpos += 1
 
+            cell_x = 0
             for cell in cell_row:
                 for xdiff in range(cell_width):
                     display_map[xpos, ypos] = cell[xdiff, ydiff]
                     xpos += 1
 
                 # add right row separator
-                display_map[xpos, ypos] = '|'
+                if cell_x != border - 1:
+                    display_map[xpos, ypos] = '|'
+                else:
+                    display_map[xpos, ypos] = ']'
+
                 xpos += 1
+                cell_x += 1
             ypos += 1
 
         final_y = ypos
@@ -114,9 +123,9 @@ class Map:
         
     """
     def __init__(self):
-        # TODO make map size expand with discovery
         self.size_x = 4
         self.size_y = 4
+        self.found_borders = False
 
         self.seen_scream = False
         self.found_wumpus = False
@@ -124,7 +133,8 @@ class Map:
         self.gold_loc = None
 
         self.vector_dim = vector_dim = 9
-        self.world_map = np.zeros((self.size_x, self.size_y, vector_dim), dtype=np.int)
+        self.world_map = np.zeros((self.size_x + 2, self.size_y + 2, 
+            vector_dim), dtype=np.int)
 
         self.index_map = {
             "ok" : 0,
@@ -230,16 +240,18 @@ class Map:
             ypos = 0
 
             # set first spacer
-            Util.add_row_separator(display_map, ypos, cell_width)
+            Util.add_row_separator(display_map, ypos, cell_width, border=False)
             ypos += 1
             
             for y in range(map_height):
                 # set the cells
                 ypos = Util.add_cell_row(display_map, ypos, y, cells,
-                        cell_width, cell_height)
+                        cell_width, cell_height, border=self.size_x)
 
                 # set the next spacer
-                Util.add_row_separator(display_map, ypos, cell_width)
+                at_border = y == self.size_y - 1
+                Util.add_row_separator(display_map, ypos, cell_width, 
+                        border=at_border)
                 ypos += 1
 
             display_map = np.flip(display_map, axis=1)
@@ -270,8 +282,15 @@ class Map:
         # print display map
         print_display_map(display_map)
 
+    def located_borders(self, world_size):
+        self.found_borders = True
+        self._constrict_dims(world_size)
 
     def update(self, x, y, percept):
+        # check if x and y are out of our current expected world size
+        if x >= self.size_x or y >= self.size_y:
+            self._expand_dims()
+
         # ensure current position is set visited and OK
         self.world_map[x, y, self.index_map["ok"]] = 1
         self.world_map[x, y, self.index_map["visited"]] = 1
@@ -291,17 +310,22 @@ class Map:
         else:
             self.world_map[x, y, self.index_map["glitter"]] = 0
 
-        # handle stenches
+        # mark map with breezes and stenches before updating
         if percept["stench"] is True and self.seen_scream == False\
                 and self.found_wumpus == False:
             self.world_map[x, y, self.index_map["stench"]] = 1
+        if percept["breeze"] is True:
+            self.world_map[x, y, self.index_map["breeze"]] = 1
+
+        # handle stenches
+        if percept["stench"] is True and self.seen_scream == False\
+                and self.found_wumpus == False:
             self._update_neighbors(x, y, "stench")
         else:
             self._update_neighbors(x, y, "no_stench")
 
         # handle breezes
         if percept["breeze"] is True:
-            self.world_map[x, y, self.index_map["breeze"]] = 1
             self._update_neighbors(x, y, "breeze")
         else:
             self._update_neighbors(x, y, "no_breeze")
@@ -451,6 +475,29 @@ class Map:
     def set(self, x, y, index, value):
         self.world_map[x, y, self.index_map[index]] = value
 
+    def _constrict_dims(self, size):
+        """ constrict the map to the given final size
+        """
+        
+        new_map = np.zeros((size, size, self.vector_dim), dtype=np.int)
+        new_map[:, :, :] = self.world_map[:size, :size, :]
+    
+        self.size_x = size
+        self.size_y = size
+        self.world_map = new_map
+
+    def _expand_dims(self):
+        new_size = self.size_x * 2
+
+        new_map = np.zeros((new_size + 2, new_size + 2, self.vector_dim), 
+                dtype=np.int)
+    
+        new_map[:self.size_x + 2, :self.size_y + 2, :] = self.world_map
+
+        self.size_x = new_size
+        self.size_y = new_size
+        self.world_map = new_map
+
     def _clear_wumpus(self):
         for x in range(self.size_x):
             for y in range(self.size_y):
@@ -556,6 +603,9 @@ class Map:
             elif value == "possible_wumpus" and self.found_wumpus == False:
                 stenches = self._find_neighboring(x, y, "stench")
                 # if more than one stench surrounding we know this is the wumpus
+                # TODO bug when there are two possible wumpi and two stenches
+                # in a 2x2 area this code will mark the wrong one 
+                # 50% of the time
                 if len(stenches) > 1:
                     # mark that we found the wumpus
                     self.found_wumpus = True
@@ -575,13 +625,16 @@ class Map:
         max_x = 0
         max_y = 0
 
+        # not affected by border size
         if x > 0:
             min_x = -1
-        if x < self.size_x - 1:
-            max_x = 1
         if y > 0:
             min_y = -1
-        if y < self.size_y - 1:
+
+        # is affected by border size
+        if x < self.size_x - 1 or self.found_borders is False:
+            max_x = 1
+        if y < self.size_y - 1 or self.found_borders is False:
             max_y = 1
 
         for nx in range(x + min_x, x + max_x + 1):
@@ -606,7 +659,6 @@ class Agent:
         pass
 
     def initialize(self):
-        print("call to initialize")
         self.last_action = None
         self.x = 0
         self.y = 0
@@ -640,36 +692,33 @@ class Agent:
             self.update_location()
 
         # update map
+        if bump is True:
+            # found the border of the world. report to map.
+            self.world_map.located_borders(max(self.x, self.y) + 1)
         self.world_map.update(self.x, self.y, percept)
 
         current_action = None
 
         # set up a path if we need one
         if len(self.path) <= 1:
-            print("path in setup: {}".format(self.path))
             # if have gold then go to start
             if self.hasgold is True:
-                print("setting path with hasgold")
                 self.path = self.world_map.get_path(self.x, self.y, self.direction, (0, 0))
             
             # if map has found gold then go there
             elif (self.world_map.found_gold() is True) and self.hasgold is False:
-                print("setting path with found gold")
                 gold_loc = self.world_map.get_gold_loc()
                 self.path = self.world_map.get_path(self.x, self.y, self.direction, gold_loc)
 
             # if nothing else then go to nearest safe place
             else:
-                print("setting path with nearest safe")
                 self.path = self.world_map.get_path(self.x, self.y, self.direction)
-                print("path after set: {}".format(self.path))
 
                 if self.path is None:
                     # no more reachable safe places
                     # try to leave
                     self.path = self.world_map.get_path(self.x, self.y, self.direction, (0, 0))
                     self.leave = True
-        print("path after setup path: {}".format(self.path))
 
         # if glitter then grab gold
         if glitter is True:
@@ -699,12 +748,10 @@ class Agent:
         # print out stuff
         print("position: {}, {}".format(self.x, self.y))
         print("direction: {}".format(self.direction))
-        print()
+        print("current path: {}".format(self.path))
         print()
         self.world_map.print()
         print()
-        print()
-        print("current path: {}".format(self.path))
         print(end='', flush=True)
 
         # if turn action then update orientation
@@ -718,7 +765,7 @@ class Agent:
         return current_action
 
     def gameover(self):
-        print("call to gameover")
+        pass
 
     def follow_path(self, path):
         """ get the action to take to follow the given path
