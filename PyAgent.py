@@ -130,6 +130,7 @@ class Map:
         self.seen_scream = False
         self.found_wumpus = False
 
+        self.wumpus_loc = None
         self.gold_loc = None
 
         self.vector_dim = vector_dim = 9
@@ -147,6 +148,19 @@ class Map:
             "pit" : 7,
             "wumpus" : 8
             }
+
+
+    def reset(self):
+        """ reset the map for the next runthrough
+
+            basically just props the wumpus back up
+
+        """
+        if found_wumpus is True:
+            x, y = self.wumpus_loc
+            self.set(x, y, "wumpus", 1)
+            self.set(x, y, "ok", 0)
+            self.set(x, y, "visited", 0)
 
     def print(self):
         """ print the map to the screen
@@ -299,6 +313,8 @@ class Map:
 
         # handle screams
         if percept["scream"] is True:
+            # TODO if we heard the scream and there is a possible wumpus in
+            # front of us. It must be the wumpus location.
             self.seen_scream = True
             self.found_wumpus = True
             self._clear_wumpus()
@@ -456,7 +472,6 @@ class Map:
         # couldn't find anything return None
         return None
 
-
     def get_pos(self, x, y):
         return self.world_map[x, y]
 
@@ -588,6 +603,7 @@ class Map:
                 if len(possible_wumpi) == 1:
                     self.found_wumpus = True
                     wumpus_pos = possible_wumpi[0]
+                    self.wumpus_loc = wumpus_pos
                     self.set(wumpus_pos[0], wumpus_pos[1], "wumpus", 1)
                     self._clear_possible_wumpus()
 
@@ -609,6 +625,7 @@ class Map:
                 if len(stenches) > 1:
                     # mark that we found the wumpus
                     self.found_wumpus = True
+                    self.wumpus_loc = (x, y)
                     self.set(x, y, "wumpus", 1)
                     self._clear_possible_wumpus()
 
@@ -668,6 +685,8 @@ class Agent:
         self.path = []
         self.leave = False
 
+        self.map.reset()
+
     def process(self, stench, breeze, glitter, bump, scream):
         """ process the percept and return desired action
 
@@ -686,6 +705,8 @@ class Agent:
             "bump" : bump,
             "scream" : scream
         }
+
+        # TODO add logic for shooting the wumpus
 
         # update location
         if self.last_action == Action.GOFORWARD and bump is False:
@@ -707,6 +728,8 @@ class Agent:
             
             # if map has found gold then go there
             elif (self.world_map.found_gold() is True) and self.hasgold is False:
+                # TODO need to make sure wumpus isn't blocking the path
+                # for repeated attempts
                 gold_loc = self.world_map.get_gold_loc()
                 self.path = self.world_map.get_path(self.x, self.y, self.direction, gold_loc)
 
