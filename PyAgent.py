@@ -105,6 +105,32 @@ class Util():
         elif ydiff < 0:
             return "south"
         raise Exception("how did we get here?!")
+    
+    @staticmethod
+    def get_turn_direction(desired_direction, current_direction):
+        direction_map = {
+                "north" : 0,
+                "east" : 1,
+                "south" : 2,
+                "west" : 3                    
+                }
+        
+        desired_direction = direction_map[desired_direction]
+        current_direction = direction_map[current_direction]
+
+        # right turn
+        rt_direction = current_direction
+        lt_direction = current_direction
+        while True:
+            rt_direction += 1
+            lt_direction -= 1
+            rt_direction = rt_direction % 4
+            lt_direction = lt_direction % 4
+            
+            if rt_direction == desired_direction:
+                return Action.TURNRIGHT
+            elif lt_direction == desired_direction:
+                return Action.TURNLEFT
 
 class Map:
     """ class for keeping track of the world map at any given time
@@ -126,12 +152,11 @@ class Map:
         self.size_x = 4
         self.size_y = 4
         self.found_borders = False
-
-        self.seen_scream = False
         self.found_wumpus = False
 
         self.wumpus_loc = None
         self.gold_loc = None
+        self.selected_possible_wumpus = None
 
         self.vector_dim = vector_dim = 9
         self.world_map = np.zeros((self.size_x + 2, self.size_y + 2, 
@@ -148,7 +173,6 @@ class Map:
             "pit" : 7,
             "wumpus" : 8
             }
-
 
     def reset(self):
         """ reset the map for the next runthrough
@@ -300,9 +324,12 @@ class Map:
         self.found_borders = True
         self._constrict_dims(world_size)
 
-    def update(self, x, y, percept):
+    def update(self, x, y, direction, percept, previous_action):
         # check if x and y are out of our current expected world size
         if x >= self.size_x or y >= self.size_y:
+            # TODO potential bug if we expand dims after shooting
+            # not all of the area will be accounted for
+            # probably not a huge issue
             self._expand_dims()
 
         # ensure current position is set visited and OK
@@ -356,7 +383,8 @@ class Map:
             # double check if any neighbors are now ok
             self._update_neighbors(x, y, "check_ok")
 
-    def get_path(self, startx, starty, start_direction, destination=None):
+    def get_path(self, startx, starty, start_direction, destination=None
+        nearest_type="ok", must_be_nonvisited=True):
         """ return a path to the nearest safe unvisited location
             if destination is specified then return shortest path to that
             destination
@@ -366,7 +394,6 @@ class Map:
             if no safe unvisited locations or no path to destination
                 will return None
         """
-        # TODO factor in turning time into the cost
         class Location:
             def __init__(self, x, y, direction, val, path):
                 self.x = x
@@ -445,12 +472,14 @@ class Map:
 
             # check if this node is a goal
             if destination is not None:
+                # goal is a destination
                 if cx == destination[0] and cy == destination[1]:
                     return current.path
             else:
-                if self.get(cx, cy, "ok") == 1 \
-                and self.get(cx, cy, "visited") == 0:
-                    return current.path
+                # find nearest of type
+                if must_be_nonvisited is False or self.get(cx, cy, "visited") == 0:
+                    if self.get(cx, cy, nearest_type) == 1:
+                        return current.path
 
             # expand current node
             for nx, ny in self._get_neighbors(cx, cy):
@@ -474,6 +503,28 @@ class Map:
 
     def get_pos(self, x, y):
         return self.world_map[x, y]
+
+    def get_path_to_shoot_wumpus(self, startx, starty, start_direction):
+        if self.found_wumpus is False:
+            # find a path to the nearest possible wumpus
+            path = self.get_path(startx, starty, start_direction, nearest_type="possible_wumpus")
+            # make a note of the possible wumpus we are aiming for
+            self.selected_possible_wumpus = path[-1]
+        else:
+            # find a path to the wumpus
+            path = self.get_path(startx, starty, start_direction, destination=self.wumpus_loc)
+
+        # remove the last point on the path
+        # don't actually want to run into the wumpus
+        # just want to get next to it
+        del path[-1] 
+        return path
+
+    def get_shoot_position(self):
+        if self.found_wumpus is True:
+            return self.wumpus_loc
+        else:
+            return self.selected_possible_wumpus
 
     def get_flat_map(self):
         return world_map.flatten()
@@ -671,6 +722,8 @@ class Agent:
         self.direction = None
         self.hasgold = None
         self.world_map = Map()
+        self.shoot_wumpus = False
+        self.heard_scream = False
 
     def destructor(self):
         pass
@@ -684,6 +737,8 @@ class Agent:
         self.hasarrow = True
         self.path = []
         self.leave = False
+        self.shoot_wumpus = False
+        self.heard_scream = False
 
         self.map.reset()
 
@@ -706,7 +761,9 @@ class Agent:
             "scream" : scream
         }
 
-        # TODO add logic for shooting the wumpus
+        # check if we heard the scream
+        if scream is True:
+            self.heard_scream = True
 
         # update location
         if self.last_action == Action.GOFORWARD and bump is False:
@@ -716,20 +773,18 @@ class Agent:
         if bump is True:
             # found the border of the world. report to map.
             self.world_map.located_borders(max(self.x, self.y) + 1)
-        self.world_map.update(self.x, self.y, percept)
+        self.world_map.update(self.x, self.y, self.direction, percept, self.last_action)
 
         current_action = None
 
         # set up a path if we need one
-        if len(self.path) <= 1:
+        if len(self.path) <= 1 and self.shoot_wumpus is False:
             # if have gold then go to start
             if self.hasgold is True:
                 self.path = self.world_map.get_path(self.x, self.y, self.direction, (0, 0))
             
             # if map has found gold then go there
             elif (self.world_map.found_gold() is True) and self.hasgold is False:
-                # TODO need to make sure wumpus isn't blocking the path
-                # for repeated attempts
                 gold_loc = self.world_map.get_gold_loc()
                 self.path = self.world_map.get_path(self.x, self.y, self.direction, gold_loc)
 
@@ -737,11 +792,38 @@ class Agent:
             else:
                 self.path = self.world_map.get_path(self.x, self.y, self.direction)
 
-                if self.path is None:
-                    # no more reachable safe places
-                    # try to leave
+            if self.path is None:
+                # no more reachable safe places
+                leaving = True
+
+                # try to shoot a wumpus or possible wumpus
+                if self.heard_scream is False:
+                    self.path = self.world_map.get_path_to_shoot_wumpus(
+                        self.x, self.y, self.direction)
+                    if self.path is not None:
+                        self.shoot_wumpus = True
+                        leaving = False
+
+                # try to leave
+                if leaving is True:
                     self.path = self.world_map.get_path(self.x, self.y, self.direction, (0, 0))
                     self.leave = True
+
+        # shoot the wumpus or possible wumpi
+        if self.shoot_wumpus is True and len(self.path) == 1:
+            # at this point should be next to the wumpus or possible wumpus
+            # make sure we are facing the right direction
+            shoot_pos = self.world_map.get_shoot_position()
+            current_pos = (self.x, self.y)
+            desired_direction = Util.get_direction(current_pos, shoot_pos)
+
+            if desired_direction == self.direction:
+                # shoot!
+                current_action = Action.SHOOT
+                self.path = [] # reset path to account for wumpus being possibly dead
+            else:
+                # turn to the right way
+                current_action = Util.get_turn_direction(desired_direction, self.direction)
 
         # if glitter then grab gold
         if glitter is True:
@@ -798,39 +880,13 @@ class Agent:
         """
         assert path[0][0] == self.x and path[0][1] == self.y
 
-        def get_turn_direction(desired_direction, current_direction):
-            # TODO a little inelegant/ineffecient
-            direction_map = {
-                    "north" : 0,
-                    "east" : 1,
-                    "south" : 2,
-                    "west" : 3                    
-                    }
-            
-            desired_direction = direction_map[desired_direction]
-            current_direction = direction_map[current_direction]
-
-            # right turn
-            rt_direction = current_direction
-            lt_direction = current_direction
-            while True:
-                rt_direction += 1
-                lt_direction -= 1
-                rt_direction = rt_direction % 4
-                lt_direction = lt_direction % 4
-                
-                if rt_direction == desired_direction:
-                    return Action.TURNRIGHT
-                elif lt_direction == desired_direction:
-                    return Action.TURNLEFT
-        
         desired_direction = Util.get_direction(path[0], path[1])
 
         if desired_direction == self.direction:
             path.pop(0)
             return Action.GOFORWARD
         else:
-            return get_turn_direction(desired_direction, self.direction)
+            return Util.get_turn_direction(desired_direction, self.direction)
 
     def update_location(self):
         """ update the location on goforward action
