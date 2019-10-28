@@ -107,6 +107,33 @@ class Util():
         raise Exception("how did we get here?!")
     
     @staticmethod
+    def get_facing_cell(location, direction):
+        """ get the cell directly in front of the location
+            we are facing.
+        """
+        direction_map = {
+                "north" : (0, 1),
+                "east" : (1, 0),
+                "south" : (0, -1),
+                "west" : (-1, 0)
+                }
+
+        dx, dy = direction_map[direction]
+        x, y = location
+
+        return (x + dx, y + dy)
+    
+    @staticmethod
+    def get_line_cells(location, direction, border_size):
+        x, y = location
+        cells = []
+        while x > 0 and y > 0 and x < border_size + 1 and y < border_size + 1:
+            location = get_facing_cell(location, direction)
+            x, y = location
+            cells.append(location)
+        return cells
+    
+    @staticmethod
     def get_turn_direction(desired_direction, current_direction):
         direction_map = {
                 "north" : 0,
@@ -155,6 +182,7 @@ class Map:
         self.found_wumpus = False
 
         self.wumpus_loc = None
+        self.seen_scream = False
         self.gold_loc = None
         self.selected_possible_wumpus = None
 
@@ -180,7 +208,8 @@ class Map:
             basically just props the wumpus back up
 
         """
-        if found_wumpus is True:
+        self.seen_scream = False
+        if self.found_wumpus is True:
             x, y = self.wumpus_loc
             self.set(x, y, "wumpus", 1)
             self.set(x, y, "ok", 0)
@@ -340,11 +369,25 @@ class Map:
 
         # handle screams
         if percept["scream"] is True:
-            # TODO if we heard the scream and there is a possible wumpus in
-            # front of us. It must be the wumpus location.
             self.seen_scream = True
-            self.found_wumpus = True
+            
+            # must have shot wumpus
+            # note that we assume that if we shot the wumpus must be
+            # directly in front of us
+            facing_loc = get_facing_cell((x, y), direction)
+            facing_x, facing_y = facing_loc
+            if get(facing_x, facing_y, "possible_wumpus") == 1:
+                self.wumpus_loc = facing_loc
+
             self._clear_wumpus()
+        elif previous_action == Action.SHOOT:
+            # we know we shot and did not hit the wumpus
+            # clear all possible wumpus spaces in the area
+            line = Util.get_line_cells((x, y), direction, self.size_x)
+            for location in line:
+                lx, ly = location
+                self.set(lx, ly, "possible_wumpus", 0)
+
 
         # handle glitter
         if percept["glitter"] is True:
@@ -383,7 +426,7 @@ class Map:
             # double check if any neighbors are now ok
             self._update_neighbors(x, y, "check_ok")
 
-    def get_path(self, startx, starty, start_direction, destination=None
+    def get_path(self, startx, starty, start_direction, destination=None,
         nearest_type="ok", must_be_nonvisited=True):
         """ return a path to the nearest safe unvisited location
             if destination is specified then return shortest path to that
@@ -484,7 +527,8 @@ class Map:
             # expand current node
             for nx, ny in self._get_neighbors(cx, cy):
                 # check if neighbor is valid
-                if self.get(nx, ny, "ok") == 1:
+                if (self.get(nx, ny, "ok") == 1
+                        or self.get(nx, ny, nearest_type) == 1):
                     # add to frontier
                     new_path = copy.deepcopy(current.path)
                     new_path.append((nx, ny))
@@ -505,11 +549,14 @@ class Map:
         return self.world_map[x, y]
 
     def get_path_to_shoot_wumpus(self, startx, starty, start_direction):
+        # TODO figure out what we want to do if we are too close to the wumpus
+        # TODO fix the bug with being too close to the wumpus already
         if self.found_wumpus is False:
             # find a path to the nearest possible wumpus
             path = self.get_path(startx, starty, start_direction, nearest_type="possible_wumpus")
             # make a note of the possible wumpus we are aiming for
-            self.selected_possible_wumpus = path[-1]
+            if path is not None:
+                self.selected_possible_wumpus = path[-1]
         else:
             # find a path to the wumpus
             path = self.get_path(startx, starty, start_direction, destination=self.wumpus_loc)
@@ -517,7 +564,8 @@ class Map:
         # remove the last point on the path
         # don't actually want to run into the wumpus
         # just want to get next to it
-        del path[-1] 
+        if path is not None:
+            del path[-1] 
         return path
 
     def get_shoot_position(self):
@@ -740,7 +788,7 @@ class Agent:
         self.shoot_wumpus = False
         self.heard_scream = False
 
-        self.map.reset()
+        self.world_map.reset()
 
     def process(self, stench, breeze, glitter, bump, scream):
         """ process the percept and return desired action
@@ -768,6 +816,9 @@ class Agent:
         # update location
         if self.last_action == Action.GOFORWARD and bump is False:
             self.update_location()
+        # update arrow
+        elif self.last_action == Action.SHOOT:
+            self.hasarrow = False
 
         # update map
         if bump is True:
@@ -810,7 +861,9 @@ class Agent:
                     self.leave = True
 
         # shoot the wumpus or possible wumpi
-        if self.shoot_wumpus is True and len(self.path) == 1:
+        print("shoot wumpus? {}".format(self.shoot_wumpus))
+        if self.shoot_wumpus is True and len(self.path) <= 1 and \
+               self.hasarrow is True:
             # at this point should be next to the wumpus or possible wumpus
             # make sure we are facing the right direction
             shoot_pos = self.world_map.get_shoot_position()
@@ -854,6 +907,7 @@ class Agent:
         print("position: {}, {}".format(self.x, self.y))
         print("direction: {}".format(self.direction))
         print("current path: {}".format(self.path))
+        print("current action: {}".format(current_action))
         print()
         self.world_map.print()
         print()
