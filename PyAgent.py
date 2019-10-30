@@ -12,6 +12,8 @@ import Orientation
 
 
 
+
+
 class Util():
     @staticmethod
     def get_random_lr():
@@ -127,8 +129,8 @@ class Util():
     def get_line_cells(location, direction, border_size):
         x, y = location
         cells = []
-        while x > 0 and y > 0 and x < border_size + 1 and y < border_size + 1:
-            location = get_facing_cell(location, direction)
+        while x >= 0 and y >= 0 and x < border_size and y < border_size:
+            location = Util.get_facing_cell(location, direction)
             x, y = location
             cells.append(location)
         return cells
@@ -176,6 +178,11 @@ class Map:
         
     """
     def __init__(self):
+        # constants
+        self.PIT_TRUE_PROB = 0.2
+        self.PIT_FALSE_PROB = 1 - self.PIT_TRUE_PROB
+
+        # regular variables
         self.size_x = 4
         self.size_y = 4
         self.found_borders = False
@@ -374,9 +381,9 @@ class Map:
             # must have shot wumpus
             # note that we assume that if we shot the wumpus must be
             # directly in front of us
-            facing_loc = get_facing_cell((x, y), direction)
+            facing_loc = Util.get_facing_cell((x, y), direction)
             facing_x, facing_y = facing_loc
-            if get(facing_x, facing_y, "possible_wumpus") == 1:
+            if self.get(facing_x, facing_y, "possible_wumpus") == 1:
                 self.wumpus_loc = facing_loc
 
             self._clear_wumpus()
@@ -386,7 +393,8 @@ class Map:
             line = Util.get_line_cells((x, y), direction, self.size_x)
             for location in line:
                 lx, ly = location
-                self.set(lx, ly, "possible_wumpus", 0)
+                self.set(lx, ly, "possible_wumpus", -1)
+                self._update_neighbors(lx, ly, "check_wumpus")
 
 
         # handle glitter
@@ -549,8 +557,6 @@ class Map:
         return self.world_map[x, y]
 
     def get_path_to_shoot_wumpus(self, startx, starty, start_direction):
-        # TODO figure out what we want to do if we are too close to the wumpus
-        # TODO fix the bug with being too close to the wumpus already
         if self.found_wumpus is False:
             # find a path to the nearest possible wumpus
             path = self.get_path(startx, starty, start_direction, nearest_type="possible_wumpus")
@@ -559,7 +565,8 @@ class Map:
                 self.selected_possible_wumpus = path[-1]
         else:
             # find a path to the wumpus
-            path = self.get_path(startx, starty, start_direction, destination=self.wumpus_loc)
+            path = self.get_path(startx, starty, start_direction, 
+                    nearest_type="wumpus", destination=self.wumpus_loc)
 
         # remove the last point on the path
         # don't actually want to run into the wumpus
@@ -759,6 +766,19 @@ class Map:
         for ny in range(y + min_y, y + max_y + 1):
             if ny != y:
                 yield (x, ny)
+    
+    def _calculate_pit_probabilities(self):
+        # set up known, breeze, and frontier
+        # frontier will be all possible pit locations
+        frontier = None
+
+        def _get_pit_locations(self):
+            pit_locations = []
+            for x in range(self.size_x):
+                for y in range(slef.size_y):
+                    if self.get(x, y, "possible_pit") == 1:
+                        pit_locations.append((x, y))
+
 
 class Agent:
     """ pyagent wrapper class
@@ -846,9 +866,8 @@ class Agent:
             if self.path is None:
                 # no more reachable safe places
                 leaving = True
-
                 # try to shoot a wumpus or possible wumpus
-                if self.heard_scream is False:
+                if self.heard_scream is False and self.hasarrow is True:
                     self.path = self.world_map.get_path_to_shoot_wumpus(
                         self.x, self.y, self.direction)
                     if self.path is not None:
@@ -861,7 +880,6 @@ class Agent:
                     self.leave = True
 
         # shoot the wumpus or possible wumpi
-        print("shoot wumpus? {}".format(self.shoot_wumpus))
         if self.shoot_wumpus is True and len(self.path) <= 1 and \
                self.hasarrow is True:
             # at this point should be next to the wumpus or possible wumpus
@@ -873,6 +891,7 @@ class Agent:
             if desired_direction == self.direction:
                 # shoot!
                 current_action = Action.SHOOT
+                self.shoot_wumpus = False
                 self.path = [] # reset path to account for wumpus being possibly dead
             else:
                 # turn to the right way
