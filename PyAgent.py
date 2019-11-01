@@ -196,6 +196,8 @@ class Map:
         self.vector_dim = vector_dim = 9
         self.world_map = np.zeros((self.size_x + 2, self.size_y + 2, 
             vector_dim), dtype=np.int)
+        self.pit_probabilities = np.zeros((self.size_x + 2, self.size_y + 2), 
+            dtype=np.float32)
 
         self.index_map = {
             "ok" : 0,
@@ -433,6 +435,9 @@ class Map:
         if percept["stench"] is False or percept["breeze"] is False:
             # double check if any neighbors are now ok
             self._update_neighbors(x, y, "check_ok")
+
+        # update pit probabilities
+        self._update_pit_probabilities()
 
     def get_path(self, startx, starty, start_direction, destination=None,
         nearest_type="ok", must_be_nonvisited=True):
@@ -775,9 +780,18 @@ class Map:
         def _get_pit_locations():
             pit_locations = []
             for x in range(self.size_x):
-                for y in range(slef.size_y):
+                for y in range(self.size_y):
                     if self.get(x, y, "possible_pit") == 1:
                         pit_locations.append((x, y))
+            return pit_locations
+
+        def _get_breeze_locations():
+            breeze_locations = []
+            for x in range(self.size_x):
+                for y in range(self.size_y):
+                    if self.get(x, y, "breeze") == 1:
+                        breeze_locations.append((x, y))
+            return breeze_locations
 
         def _get_possible_combinations(frontier):
             current = []
@@ -800,20 +814,91 @@ class Map:
                 yield current
         
         def _get_p_combination(combination):
-            pass
+            p = 1.0
+            
+            for val in combination:
+                if val == 1:
+                    p *= self.PIT_TRUE_PROB
+                else:
+                    p *= self.PIT_FALSE_PROB
+            
+            return p
 
+        def _check_breeze_consistency(frontier, combination, breeze, 
+                location, location_included):
+            breezes_remaining = copy.deepcopy(breeze)
+            print("breeze: {}".format(breeze))
+
+            def _remove_neighboring_breezes(pit_loc):
+                pit_x, pit_y = pit_loc
+                for neighbor in self._get_neighbors(pit_x, pit_y):
+                    if neighbor in breezes_remaining:
+                        breezes_remaining.remove(neighbor)
+
+            if location_included is True:
+                _remove_neighboring_breezes(location)
+
+            for i in range(len(frontier)):
+                if combination[i] == 0:
+                    # this pit is not included
+                    continue
+                
+                # this pit is included
+                # remove neighboring breezes
+                pit_loc = frontier[i]
+                _remove_neighboring_breezes(pit_loc)
+            
+            if len(breezes) == 0:
+                return True
+            else:
+                return False
+        
 
         frontier = _get_pit_locations()
+        breezes = _get_breeze_locations()
         probabilities = {}
 
         for location in frontier:
-            probabilities[location] = (0.0, 0.0)
-    
-            frontier_prime = copy(frontier)
+            frontier_prime = copy.deepcopy(frontier)
             frontier_prime.remove(location)
+
+            p_loc_true = 0.0
+            p_loc_false = 0.0
     
             for combination in _get_possible_combinations(frontier):
-                pass
+                p_frontier = _get_p_combination(combination)
+
+                if _check_breeze_consistency(frontier_prime, combination,
+                        breezes, location, location_included=True) == True:
+                    p_loc_true += p_frontier
+                if _check_breeze_consistency(frontier_prime, combination,
+                        breezes, location, location_included=False) == True:
+                    p_loc_false += p_frontier
+
+            p_loc_true *= 0.2
+            p_loc_false *= 0.8
+            p_loc_true = p_loc_true / (p_loc_true + p_loc_false)
+            probabilities[location] = p_loc_true
+
+        return probabilities
+    
+    def _update_pit_probabilities(self):
+        pit_probabilities = self._calculate_pit_probabilities()
+
+        for x in range(self.size_x):
+            for y in range(self.size_y):
+                current_loc = (x, y)
+
+                if self.get(x, y, "ok") == 1:
+                    self.pit_probabilities[x, y] = 0.0
+                    continue
+
+                if current_loc in pit_probabilities:
+                    self.pit_probabilities[x, y] = \
+                            pit_probabilities[current_loc]
+                else:
+                    self.pit_probabilities[x, y] = 0.2
+
 
 
 class Agent:
