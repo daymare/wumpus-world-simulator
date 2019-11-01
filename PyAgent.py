@@ -772,12 +772,48 @@ class Map:
         # frontier will be all possible pit locations
         frontier = None
 
-        def _get_pit_locations(self):
+        def _get_pit_locations():
             pit_locations = []
             for x in range(self.size_x):
                 for y in range(slef.size_y):
                     if self.get(x, y, "possible_pit") == 1:
                         pit_locations.append((x, y))
+
+        def _get_possible_combinations(frontier):
+            current = []
+            for location in frontier:
+                current.append(1)
+
+            yield current
+
+            # while there are still combinations to do
+            while 1 in current:
+                # find rightmost 1 and decrement
+                i = -1
+                while current[i] == 0:
+                    i -= 1
+                current[i] = 0
+                i += 1
+                while i < 0:
+                    current[i] = 1
+                    i += 1
+                yield current
+        
+        def _get_p_combination(combination):
+            pass
+
+
+        frontier = _get_pit_locations()
+        probabilities = {}
+
+        for location in frontier:
+            probabilities[location] = (0.0, 0.0)
+    
+            frontier_prime = copy(frontier)
+            frontier_prime.remove(location)
+    
+            for combination in _get_possible_combinations(frontier):
+                pass
 
 
 class Agent:
