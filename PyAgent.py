@@ -242,7 +242,8 @@ class Map:
                 '5' : "B",
                 '6' : "G",
                 '7' : "P",
-                '8' : "W"
+                '8' : "W",
+                '9' : "Q"
             }
         negated_symbol_map = \
             {
@@ -251,10 +252,10 @@ class Map:
             }
         cell_layout = \
             [
-                [' ', '0', ' ', ' ', '1', ' ', ' '],
-                [' ', '4', ' ', ' ', '5', ' ', ' '],
-                [' ', '7', ' ', ' ', '8', ' ', ' '],
-                [' ', '2', ' ', ' ', '3', ' ', ' ']
+                [' ', '9', ' ', ' ', ' ', ' ', ' ', ' ', ' '],
+                [' ', '0', ' ', ' ', '1', ' ', ' ', '4', ' '],
+                [' ', '2', ' ', ' ', '3', ' ', ' ', '5', ' '],
+                [' ', '7', ' ', ' ', '8', ' ', ' ', ' ', ' ']
             ]
         cell_layout = np.array(cell_layout, dtype=np.character)
         cell_layout = np.transpose(cell_layout)
@@ -271,6 +272,7 @@ class Map:
             """ build a display cell from the given map indecies
             """
             position = self.world_map[map_x, map_y]
+            probability = self.pit_probabilities[map_x, map_y]
 
             xdim = cell_width
             ydim = cell_height
@@ -280,8 +282,16 @@ class Map:
             for x in range(xdim):
                 for y in range(ydim):
                     if cell[x, y].decode("utf-8") in symbol_map:
-                        indicator = cell[x, y].decode("utf-8")
-                        symbol = symbol_map[indicator]
+                        indicator = cell_layout[x, y].decode("utf-8")
+                        if indicator == ' ':
+                            continue
+                        symbol_index = int(indicator)
+
+                        if symbol_index == 9:
+                            symbol = "{0:.2f}".format(probability)
+                        else:
+                            symbol = symbol_map[indicator]
+
                         if indicator in negated_symbol_map:
                             negated_symbol = negated_symbol_map[indicator]
 
@@ -289,8 +299,7 @@ class Map:
                         cell[x, y] = ' '
 
                         # check if the symbol exists at this position
-                        symbol_index = int(indicator)
-                        if position[symbol_index] == 1:
+                        if symbol_index == 9 or position[symbol_index] == 1:
                             for i in range(len(symbol)):
                                 cell[x+i, y] = symbol[i]
                         elif position[symbol_index] == -1:
@@ -777,11 +786,19 @@ class Map:
         # frontier will be all possible pit locations
         frontier = None
 
-        def _get_pit_locations():
+        def _get_possible_pit_locations():
             pit_locations = []
             for x in range(self.size_x):
                 for y in range(self.size_y):
                     if self.get(x, y, "possible_pit") == 1:
+                        pit_locations.append((x, y))
+            return pit_locations
+        
+        def _get_pit_locations():
+            pit_locations = []
+            for x in range(self.size_x):
+                for y in range(self.size_y):
+                    if self.get(x, y, "pit") == 1:
                         pit_locations.append((x, y))
             return pit_locations
 
@@ -824,10 +841,18 @@ class Map:
             
             return p
 
+        def _remove_known_pit_breeze_information(pits, breezes):
+            def _remove_neighboring_breezes(pit_loc):
+                pit_x, pit_y = pit_loc
+                for neighbor in self._get_neighbors(pit_x, pit_y):
+                    if neighbor in breezes:
+                        breezes.remove(neighbor)
+            for pit in pits:
+                _remove_neighboring_breezes(pit)
+
         def _check_breeze_consistency(frontier, combination, breeze, 
                 location, location_included):
             breezes_remaining = copy.deepcopy(breeze)
-            print("breeze: {}".format(breeze))
 
             def _remove_neighboring_breezes(pit_loc):
                 pit_x, pit_y = pit_loc
@@ -848,14 +873,16 @@ class Map:
                 pit_loc = frontier[i]
                 _remove_neighboring_breezes(pit_loc)
             
-            if len(breezes) == 0:
+            if len(breezes_remaining) == 0:
                 return True
             else:
                 return False
         
 
-        frontier = _get_pit_locations()
+        frontier = _get_possible_pit_locations()
+        pits = _get_pit_locations()
         breezes = _get_breeze_locations()
+        _remove_known_pit_breeze_information(pits, breezes)
         probabilities = {}
 
         for location in frontier:
@@ -865,7 +892,7 @@ class Map:
             p_loc_true = 0.0
             p_loc_false = 0.0
     
-            for combination in _get_possible_combinations(frontier):
+            for combination in _get_possible_combinations(frontier_prime):
                 p_frontier = _get_p_combination(combination)
 
                 if _check_breeze_consistency(frontier_prime, combination,
