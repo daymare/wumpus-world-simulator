@@ -10,7 +10,7 @@ import numpy as np
 import Action
 import Orientation
 
-
+_DEBUG = False
 
 
 
@@ -225,6 +225,20 @@ class Map:
             self.set(x, y, "ok", 0)
             if self.gold_loc == self.wumpus_loc:
                 self.set(x, y, "visited", 0)
+
+    def print_probabilities(self):
+        print("P(pit):")
+
+        # print each row
+        last_y = 0
+        for x, y in self._get_all_spaces(invert_y=True):
+            if last_y != y:
+                print()
+            print("{0:.2f} ".format(self.getp(x, y)), end='')
+    
+            last_y = y
+        print()
+        print(flush=True)
 
     def print(self):
         """ print the map to the screen
@@ -798,7 +812,7 @@ class Map:
             if ny != y:
                 yield (x, ny)
 
-    def _get_all_spaces(self):
+    def _get_all_spaces(self, invert_y=False):
         if self.found_borders is True:
             x_range = range(self.size_x)
             y_range = range(self.size_y)
@@ -806,8 +820,11 @@ class Map:
             x_range = range(self.size_x + 2)
             y_range = range(self.size_y + 2)
 
-        for x in x_range:
-            for y in y_range:
+        if invert_y is True:
+            y_range = reversed(y_range)
+
+        for y in y_range:
+            for x in x_range:
                 yield x, y
 
     def _calculate_pit_probabilities(self):
@@ -1115,14 +1132,17 @@ class Agent:
             current_action = self.follow_path(self.path)
 
         # print out stuff
-        print("position: {}, {}".format(self.x, self.y))
-        print("direction: {}".format(self.direction))
-        print("current path: {}".format(self.path))
-        print("current action: {}".format(current_action))
-        print()
-        self.world_map.print()
-        print()
-        print(end='', flush=True)
+        if _DEBUG is True:
+            print("position: {}, {}".format(self.x, self.y))
+            print("direction: {}".format(self.direction))
+            print("current path: {}".format(self.path))
+            print("current action: {}".format(current_action))
+            print()
+            self.world_map.print()
+            print()
+            print(end='', flush=True)
+        else:
+            self.world_map.print_probabilities()
 
         # if turn action then update orientation
         if current_action == Action.TURNLEFT \
