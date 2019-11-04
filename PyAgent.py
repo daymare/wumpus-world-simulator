@@ -129,7 +129,7 @@ class Util():
     def get_line_cells(location, direction, border_size):
         x, y = location
         cells = []
-        while x >= 0 and y >= 0 and x < border_size and y < border_size:
+        while x >= 0 and y >= 0 and x < border_size-1 and y < border_size-1:
             location = Util.get_facing_cell(location, direction)
             x, y = location
             cells.append(location)
@@ -181,6 +181,7 @@ class Map:
         # constants
         self.PIT_TRUE_PROB = 0.2
         self.PIT_FALSE_PROB = 1 - self.PIT_TRUE_PROB
+        self.PIT_TRAVERSE_PROB_THRESHOLD = 0.5
 
         # regular variables
         self.size_x = 4
@@ -222,7 +223,8 @@ class Map:
             x, y = self.wumpus_loc
             self.set(x, y, "wumpus", 1)
             self.set(x, y, "ok", 0)
-            self.set(x, y, "visited", 0)
+            if self.gold_loc == self.wumpus_loc:
+                self.set(x, y, "visited", 0)
 
     def print(self):
         """ print the map to the screen
@@ -260,14 +262,11 @@ class Map:
         cell_layout = np.array(cell_layout, dtype=np.character)
         cell_layout = np.transpose(cell_layout)
 
-        # TODO double check cell layout shape is as expected
-
         cell_width = cell_layout.shape[0]
         cell_height = cell_layout.shape[1]
         map_width = self.world_map.shape[0]
         map_height = self.world_map.shape[1]
 
-        # TODO double check build cell works as expected
         def build_cell(map_x, map_y):
             """ build a display cell from the given map indecies
             """
@@ -308,15 +307,12 @@ class Map:
             
             return cell
 
-        # TODO double check build map works as expected
         def build_map(cells):
             """ build a display map from a matrix of cells
                 dimensions should be (
                     1 + (cell_width + 1) * num_cellsx, 
                     1 + (cell_height + 1) * num_cellsy)
             """
-            # TODO double check shape of world map is as expected
-
             xdim = 1 + (cell_width + 1) * map_width
             ydim = 1 + (cell_height + 1) * map_height
 
@@ -371,6 +367,11 @@ class Map:
         self.found_borders = True
         self._constrict_dims(world_size)
 
+    def handle_death(self, x, y):
+        if self.get(x, y, "possible_pit") == 1:
+            self.set(x, y, "pit", 1)
+            self.set(x, y, "possible_pit", 0)
+
     def update(self, x, y, direction, percept, previous_action):
         # check if x and y are out of our current expected world size
         if x >= self.size_x or y >= self.size_y:
@@ -396,6 +397,7 @@ class Map:
             facing_x, facing_y = facing_loc
             if self.get(facing_x, facing_y, "possible_wumpus") == 1:
                 self.wumpus_loc = facing_loc
+                self.found_wumpus = True
 
             self._clear_wumpus()
         elif previous_action == Action.SHOOT:
@@ -449,7 +451,8 @@ class Map:
         self._update_pit_probabilities()
 
     def get_path(self, startx, starty, start_direction, destination=None,
-        nearest_type="ok", must_be_nonvisited=True):
+        nearest_type="ok", must_be_nonvisited=True, allow_risk=False,
+        ignore_wumpus=False):
         """ return a path to the nearest safe unvisited location
             if destination is specified then return shortest path to that
             destination
@@ -545,11 +548,24 @@ class Map:
                 if must_be_nonvisited is False or self.get(cx, cy, "visited") == 0:
                     if self.get(cx, cy, nearest_type) == 1:
                         return current.path
+                    elif nearest_type == "ok" and \
+                        self.getp(cx, cy) < self.PIT_TRAVERSE_PROB_THRESHOLD:
+                        return current.path
+
 
             # expand current node
             for nx, ny in self._get_neighbors(cx, cy):
+                # figure out probably ok
+                if (self.get(nx, ny, "possible_wumpus") != 1 or ignore_wumpus is True) \
+                    and (self.get(nx, ny, "wumpus") != 1 or ignore_wumpus is True) \
+                    and self.getp(nx, ny) < self.PIT_TRAVERSE_PROB_THRESHOLD:
+                    probably_ok = True
+                else:
+                    probably_ok = False
+
                 # check if neighbor is valid
                 if (self.get(nx, ny, "ok") == 1
+                        or (allow_risk is True and probably_ok is True)
                         or self.get(nx, ny, nearest_type) == 1):
                     # add to frontier
                     new_path = copy.deepcopy(current.path)
@@ -607,6 +623,9 @@ class Map:
     def get(self, x, y, index):
         return self.world_map[x, y, self.index_map[index]]
 
+    def getp(self, x, y):
+        return self.pit_probabilities[x, y]
+
     def set(self, x, y, index, value):
         self.world_map[x, y, self.index_map[index]] = value
 
@@ -634,29 +653,27 @@ class Map:
         self.world_map = new_map
 
     def _clear_wumpus(self):
-        for x in range(self.size_x):
-            for y in range(self.size_y):
-                self.set(x, y, "possible_wumpus", -1)
-                self.set(x, y, "stench", 0)
-                self.set(x, y, "wumpus", 0)
+        for x, y in self._get_all_spaces():
+            self.set(x, y, "possible_wumpus", -1)
+            self.set(x, y, "stench", 0)
+            self.set(x, y, "wumpus", 0)
 
-                # check if this makes any new locations ok
-                if self.get(x, y, "breeze") == 0 \
-                    and self.get(x, y, "stench") == 0 \
-                    and self.get(x, y, "visited") == 1:
-                    self._update_neighbors(x, y, "ok")
+            # check if this makes any new locations ok
+            if self.get(x, y, "breeze") == 0 \
+                and self.get(x, y, "stench") == 0 \
+                and self.get(x, y, "visited") == 1:
+                self._update_neighbors(x, y, "ok")
 
     def _clear_possible_wumpus(self):
-        for x in range(self.size_x):
-            for y in range(self.size_y):
-                self.set(x, y, "possible_wumpus", 0)
-                self.set(x, y, "stench", 0)
+        for x, y in self._get_all_spaces():
+            self.set(x, y, "possible_wumpus", 0)
+            self.set(x, y, "stench", 0)
 
-                # check if this makes any new locations ok
-                if self.get(x, y, "breeze") == 0 \
-                    and self.get(x, y, "stench") == 0 \
-                    and self.get(x, y, "visited") == 1:
-                    self._update_neighbors(x, y, "ok")
+            # check if this makes any new locations ok
+            if self.get(x, y, "breeze") == 0 \
+                and self.get(x, y, "stench") == 0 \
+                and self.get(x, y, "visited") == 1:
+                self._update_neighbors(x, y, "ok")
 
     def _update_neighbors(self, x, y, value):
         for pos in self._get_neighbors(x, y):
@@ -780,7 +797,19 @@ class Map:
         for ny in range(y + min_y, y + max_y + 1):
             if ny != y:
                 yield (x, ny)
-    
+
+    def _get_all_spaces(self):
+        if self.found_borders is True:
+            x_range = range(self.size_x)
+            y_range = range(self.size_y)
+        else:
+            x_range = range(self.size_x + 2)
+            y_range = range(self.size_y + 2)
+
+        for x in x_range:
+            for y in y_range:
+                yield x, y
+
     def _calculate_pit_probabilities(self):
         # set up known, breeze, and frontier
         # frontier will be all possible pit locations
@@ -788,26 +817,23 @@ class Map:
 
         def _get_possible_pit_locations():
             pit_locations = []
-            for x in range(self.size_x):
-                for y in range(self.size_y):
-                    if self.get(x, y, "possible_pit") == 1:
-                        pit_locations.append((x, y))
+            for x, y in self._get_all_spaces():
+                if self.get(x, y, "possible_pit") == 1:
+                    pit_locations.append((x, y))
             return pit_locations
         
         def _get_pit_locations():
             pit_locations = []
-            for x in range(self.size_x):
-                for y in range(self.size_y):
-                    if self.get(x, y, "pit") == 1:
-                        pit_locations.append((x, y))
+            for x, y in self._get_all_spaces():
+                if self.get(x, y, "pit") == 1:
+                    pit_locations.append((x, y))
             return pit_locations
 
         def _get_breeze_locations():
             breeze_locations = []
-            for x in range(self.size_x):
-                for y in range(self.size_y):
-                    if self.get(x, y, "breeze") == 1:
-                        breeze_locations.append((x, y))
+            for x, y in self._get_all_spaces():
+                if self.get(x, y, "breeze") == 1:
+                    breeze_locations.append((x, y))
             return breeze_locations
 
         def _get_possible_combinations(frontier):
@@ -912,20 +938,25 @@ class Map:
     def _update_pit_probabilities(self):
         pit_probabilities = self._calculate_pit_probabilities()
 
-        for x in range(self.size_x):
-            for y in range(self.size_y):
-                current_loc = (x, y)
+        for x, y in self._get_all_spaces():
+            current_loc = (x, y)
 
-                if self.get(x, y, "ok") == 1:
-                    self.pit_probabilities[x, y] = 0.0
-                    continue
+            # assign prob to ok places
+            if self.get(x, y, "ok") == 1:
+                self.pit_probabilities[x, y] = 0.0
+                continue
 
-                if current_loc in pit_probabilities:
-                    self.pit_probabilities[x, y] = \
-                            pit_probabilities[current_loc]
-                else:
-                    self.pit_probabilities[x, y] = 0.2
+            # assign prob to places we know are pits
+            if self.get(x, y, "pit") == 1:
+                self.pit_probabilities[x, y] = 1.0
+                continue
 
+            # assign prob to calculated and unknown places
+            if current_loc in pit_probabilities:
+                self.pit_probabilities[x, y] = \
+                        pit_probabilities[current_loc]
+            else:
+                self.pit_probabilities[x, y] = 0.2
 
 
 class Agent:
@@ -1011,11 +1042,24 @@ class Agent:
             else:
                 self.path = self.world_map.get_path(self.x, self.y, self.direction)
 
+                # no guaranteed safe place
+                # check if there is probably a safe place to go to
+                if self.path is None:
+                    self.path = self.world_map.get_path(self.x, self.y, 
+                            self.direction, allow_risk=True)
+
             if self.path is None:
                 # no more reachable safe places
                 leaving = True
+                
+                # check if we can get anywhere useful by ignoring the wumpus
+                ignore_path = self.world_map.get_path(
+                        self.x, self.y, self.direction, allow_risk=True,
+                        ignore_wumpus=True)
+
                 # try to shoot a wumpus or possible wumpus
-                if self.heard_scream is False and self.hasarrow is True:
+                if self.heard_scream is False and self.hasarrow is True \
+                        and ignore_path is not None:
                     self.path = self.world_map.get_path_to_shoot_wumpus(
                         self.x, self.y, self.direction)
                     if self.path is not None:
@@ -1091,7 +1135,9 @@ class Agent:
         return current_action
 
     def gameover(self):
-        pass
+        if self.last_action == Action.GOFORWARD:
+            self.update_location()
+            self.world_map.handle_death(self.x, self.y)
 
     def follow_path(self, path):
         """ get the action to take to follow the given path
