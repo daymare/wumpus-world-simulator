@@ -10,7 +10,7 @@ import numpy as np
 import Action
 import Orientation
 
-_DEBUG = False
+_DEBUG = True
 
 
 
@@ -648,9 +648,9 @@ class Map:
         """
         
         new_map = np.zeros((size, size, self.vector_dim), dtype=np.int)
-        new_pit_probabilities = np.zeros((size, size, self.vector_dim), dtype=np.float32)
+        new_pit_probabilities = np.zeros((size, size), dtype=np.float32)
         new_map[:, :, :] = self.world_map[:size, :size, :]
-        new_pit_probabilities[:, :, :] = self.pit_probabilities[:size, :size, :]
+        new_pit_probabilities[:, :] = self.pit_probabilities[:size, :size]
     
         self.size_x = size
         self.size_y = size
@@ -666,7 +666,8 @@ class Map:
             dtype=np.float32)
     
         new_map[:self.size_x + 2, :self.size_y + 2, :] = self.world_map
-        new_pit_probabilities[:self.size_x + 2, :self.size_y + 2, :] = self.pit_probabilities
+
+        new_pit_probabilities[:self.size_x + 2, :self.size_y + 2] = self.pit_probabilities
 
         self.size_x = new_size
         self.size_y = new_size
