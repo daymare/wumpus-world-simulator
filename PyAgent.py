@@ -648,23 +648,30 @@ class Map:
         """
         
         new_map = np.zeros((size, size, self.vector_dim), dtype=np.int)
+        new_pit_probabilities = np.zeros((size, size, self.vector_dim), dtype=np.float32)
         new_map[:, :, :] = self.world_map[:size, :size, :]
+        new_pit_probabilities[:, :, :] = self.pit_probabilities[:size, :size, :]
     
         self.size_x = size
         self.size_y = size
         self.world_map = new_map
+        self.pit_probabilities = new_pit_probabilities
 
     def _expand_dims(self):
         new_size = self.size_x * 2
 
         new_map = np.zeros((new_size + 2, new_size + 2, self.vector_dim), 
                 dtype=np.int)
+        new_pit_probabilities = np.zeros((new_size + 2, new_size + 2), 
+            dtype=np.float32)
     
         new_map[:self.size_x + 2, :self.size_y + 2, :] = self.world_map
+        new_pit_probabilities[:self.size_x + 2, :self.size_y + 2, :] = self.pit_probabilities
 
         self.size_x = new_size
         self.size_y = new_size
         self.world_map = new_map
+        self.pit_probabilities = new_pit_probabilities
 
     def _clear_wumpus(self):
         for x, y in self._get_all_spaces():
